@@ -1,0 +1,120 @@
+# =============================================================================
+# FleetStream.ingress-gateway – Go 1.21 / gRPC / WebSocket / Kafka
+# Telemetry ingestion service.
+# =============================================================================
+
+# --- Go build artifacts ------------------------------------------------------
+# Compiled binaries (one per cmd/ subpackage and loadtest tool)
+cmd/server/server
+cmd/server/server.exe
+cmd/loadtest/loadtest
+cmd/loadtest/loadtest.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.so.*
+*.dylib
+*.test
+*.out
+*.prof
+*.cover
+*.coverprofile
+coverage.txt
+coverage.html
+
+# Test binary & cache
+*.test
+*.out
+*.prof
+gocoverage/
+coverage/
+htmlcov/
+
+# --- Go workspace & module cache --------------------------------------------
+# (go.sum is committed; vendor/ is optional – ignored to keep repo lean)
+vendor/
+go.work
+go.work.sum
+
+# --- Protobuf / gRPC ---------------------------------------------------------
+# Source .proto files ARE committed under proto/v1/
+# Generated Go stubs in proto/gen/v1/build.go are committed (build tag driver).
+# Only ignore the *actual* generated artifacts a developer might produce
+# locally with a stray `protoc` invocation, so they don't sneak in.
+proto/gen/v1/*.pb.go
+proto/gen/v1/*.pb.gw.go
+proto/gen/v1/*.swagger.json
+!proto/gen/v1/build.go
+
+# --- Secrets & local configuration (NEVER commit) ---------------------------
+.env
+.env.*
+!.env.example
+*.env.local
+config/local.yaml
+config/*.local.yaml
+configs/local/
+configs/*-local.yaml
+configs/.local/
+secrets/
+*.pfx
+*.p12
+*.key
+*.pem
+!*.crt
+!*.cert
+
+# --- Runtime data & ephemeral state -----------------------------------------
+*.pid
+*.sock
+*.log
+*.log.*
+logs/
+run/
+tmp/
+data/
+influxdb/
+kafka-data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# --- Docker -----------------------------------------------------------------
+Dockerfile.local
+docker-compose.override.yml
+docker-compose.*.yml
+!docker-compose.yml
+.docker/
+.docker-volumes/
+*.pid
+
+# --- Prometheus / observability local snapshots ----------------------------
+metrics-snapshot.*
+prometheus-data/
+
+# --- Load test artifacts -----------------------------------------------------
+loadtest-results/
+loadtest/*.csv
+loadtest/*.json
+!loadtest/*.json.example
+bench.out
+bench.cpu
+bench.mem
+
+# --- IDEs & editors ---------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json.example
+.idea/
+*.iml
+.fleet/
+*.swp
+*.swo
+
+# --- OS metadata ------------------------------------------------------------
+Thumbs.db
+.DS_Store
+Desktop.ini

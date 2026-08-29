@@ -1,0 +1,108 @@
+# =============================================================================
+# FleetStream.streaming-engine – Go 1.21 / Kafka / Redis / Prometheus
+# Stream processing service.
+# =============================================================================
+
+# --- Go build artifacts ------------------------------------------------------
+# Compiled binaries (one per cmd/ subpackage)
+cmd/*/server
+cmd/*/worker
+cmd/*/processor
+cmd/*/*.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.so.*
+*.dylib
+*.test
+*.out
+*.prof
+*.cover
+*.coverprofile
+coverage.txt
+coverage.html
+
+# Test binary & cache
+*.test
+*.out
+*.prof
+gocoverage/
+coverage/
+htmlcov/
+
+# --- Go workspace & module cache --------------------------------------------
+# (go.sum is committed; vendor/ is optional – ignored to keep repo lean)
+vendor/
+go.work
+go.work.sum
+
+# --- Protobuf / gRPC ---------------------------------------------------------
+# If/when this service gains gRPC contracts, ignore only the generated files,
+# keeping the build tag driver in proto/gen/v1/build.go committed.
+**/*.pb.go
+**/*.pb.gw.go
+**/*.swagger.json
+!**/build.go
+!**/doc.go
+
+# --- Secrets & local configuration (NEVER commit) ---------------------------
+.env
+.env.*
+!.env.example
+*.env.local
+config/local.yaml
+config/*.local.yaml
+configs/local/
+configs/*-local.yaml
+configs/.local/
+secrets/
+*.pfx
+*.p12
+*.key
+*.pem
+!*.crt
+!*.cert
+
+# --- Runtime data & ephemeral state -----------------------------------------
+*.pid
+*.sock
+*.log
+*.log.*
+logs/
+run/
+tmp/
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# --- Docker -----------------------------------------------------------------
+Dockerfile.local
+docker-compose.override.yml
+docker-compose.*.yml
+!docker-compose.yml
+.docker/
+.docker-volumes/
+*.pid
+
+# --- Prometheus / observability local snapshots ----------------------------
+metrics-snapshot.*
+prometheus-data/
+
+# --- IDEs & editors ---------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json.example
+.idea/
+*.iml
+.fleet/
+*.swp
+*.swo
+
+# --- OS metadata ------------------------------------------------------------
+Thumbs.db
+.DS_Store
+Desktop.ini

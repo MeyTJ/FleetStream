@@ -1,0 +1,154 @@
+# =============================================================================
+# FleetStream.BffApi – .NET 10 / ASP.NET Core / Docker
+# Clean Architecture: Core, Application, Infrastructure, Presentation.
+# =============================================================================
+
+# --- .NET build & test artifacts ---------------------------------------------
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[Dd]ebugPublic/
+[Rr]eleasePublic/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]uild[Ll]og.*
+[Ll]og/
+[Oo]bj/
+[Oo]ut/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.sln.docstates
+*.nuget.props
+*.nuget.targets
+
+# TestResults & coverage
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.coverage
+*.coveragexml
+coverage/
+coveragereport/
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+*.coverage.json
+*.coveragexml
+*.dll
+*.exe
+*.pdb
+!*.exe.config
+
+# Publish output
+publish/
+*.[Pp]ublish.xml
+*.pubxml
+*.pubxml.user
+*.publishproj
+
+# .NET 10 / ASP.NET Core specific
+**/wwwroot/dist/
+**/wwwroot/lib/
+**/wwwroot/*.min.js
+**/wwwroot/*.min.css
+
+# --- NuGet -------------------------------------------------------------------
+packages/
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+.nuget/
+
+# --- StyleCop / ReSharper / JetBrains ----------------------------------------
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+.idea/
+*.swp
+*.swo
+
+# --- Entity Framework migrations scaffolding (committed) ---------------------
+# Keep: src/Infrastructure/**/Migrations/*.cs
+# Ignore: local SQLite DB files and EF model snapshots from local dev
+*.db
+*.db-shm
+*.db-wal
+*.mdf
+*.ldf
+*.ndf
+*.bak
+
+# --- Secrets & local configuration (NEVER commit) ----------------------------
+# User-secrets live outside the repo by default; this catches the rare cases
+# where someone sets --project to a path inside the tree.
+secrets/
+appsettings.*.local.json
+appsettings.Local.json
+appsettings.*.Production.json
+*.pfx
+*.p12
+*.key
+*.pem
+!*.crt
+!*.cert
+.env
+.env.*
+!.env.example
+
+# --- Swagger / OpenAPI generated clients -------------------------------------
+# Ignore client SDKs that CI may generate into /src or /docs
+**/Generated/
+**/GeneratedClients/
+**/openapi/*.json
+!**/openapi/openapi.json
+!**/openapi/openapi.yaml
+
+# --- Docker ------------------------------------------------------------------
+# Local compose overrides and ephemeral container data
+docker-compose.override.yml
+docker-compose.*.yml
+!docker-compose.yml
+.docker/
+docker/*.env
+docker/.volumes/
+docker/data/
+*.pid
+docker/*.pid
+
+# --- Protobuf / gRPC generated C# ---------------------------------------------
+# Generated stubs (if protoc is run locally instead of via the build target)
+**/obj/Debug/
+**/obj/Release/
+**/Protos/Generated/
+**/*.pb.cs
+!**/*.pb.cc
+!**/*.pb.go
+!**/*.pb.go.timestamp
+
+# --- Logs & diagnostics ------------------------------------------------------
+*.log
+*.log.*
+[Dd]ebug*/
+[Rr]elease*/
+LogOutput/
+
+# --- IDEs --------------------------------------------------------------------
+.vs/
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json.example
+.idea/
+
+# --- OS metadata -------------------------------------------------------------
+Thumbs.db
+.DS_Store
+Desktop.ini

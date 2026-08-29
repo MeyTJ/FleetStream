@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package fleetstream.ingress.v1;
+
+option go_package = "github.com/fleetstream/ingress-gateway/proto/gen/v1;telemetry";
+
+// TelemetryPayload represents incoming telemetry data from a delivery truck.
+message TelemetryPayload {
+  string truck_id = 1;
+  int64 timestamp_unix_ms = 2;
+  
+  // GPS coordinates
+  double latitude = 3;
+  double longitude = 4;
+  
+  // Engine metrics
+  double engine_temperature_celsius = 5;
+  
+  // Speed in km/h
+  double speed_kmh = 6;
+  
+  // Optional fuel level percentage
+  float fuel_level_percent = 7;
+  
+  // Optional diagnostic codes
+  repeated string diagnostic_codes = 8;
+  
+  // Unique message ID for idempotency
+  string message_id = 9;
+}
+
+// NormalizedTelemetry is the normalized internal representation
+message NormalizedTelemetry {
+  string truck_id = 1;
+  int64 event_timestamp = 2;
+  int64 ingested_at = 3;
+  
+  // Geographic coordinates (WGS84)
+  double latitude = 4;
+  double longitude = 5;
+  
+  // Engine metrics
+  double engine_temperature_celsius = 6;
+  double speed_kmh = 7;
+  float fuel_level_percent = 8;
+  
+  // Diagnostic codes
+  repeated string diagnostic_codes = 9;
+  
+  // Metadata
+  string source = 10;
+  string message_id = 11;
+}
+
+// IngestRequest wraps the incoming telemetry
+message IngestRequest {
+  TelemetryPayload payload = 1;
+}
+
+// IngestResponse confirms receipt
+message IngestResponse {
+  bool accepted = 1;
+  string message_id = 2;
+  int64 processed_at = 3;
+}
+
+// BatchIngestRequest for high-throughput scenarios
+message BatchIngestRequest {
+  repeated TelemetryPayload payloads = 1;
+}
+
+// BatchIngestResponse
+message BatchIngestResponse {
+  int32 accepted = 1;
+  int32 rejected = 2;
+  repeated string message_ids = 3;
+}
+
+// Service definition for the Ingress Gateway
+service TelemetryIngestion {
+  // Unary ingestion for single telemetry events
+  rpc Ingest(IngestRequest) returns (IngestResponse);
+  
+  // Batch ingestion for high-throughput
+  rpc BatchIngest(BatchIngestRequest) returns (BatchIngestResponse);
+  
+  // Bidirectional streaming for WebSocket-like behavior
+  rpc StreamIngest(stream IngestRequest) returns (stream IngestResponse);
+}
