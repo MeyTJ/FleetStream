@@ -1,0 +1,29 @@
+# Prometheus scrape config for FleetStream services.
+# Mount into Prometheus or use as reference for your observability stack.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: ingress-gateway
+    static_configs:
+      - targets: ["ingress-gateway:9090"]
+        labels:
+          service: ingress-gateway
+
+  - job_name: streaming-engine
+    static_configs:
+      - targets: ["streaming-engine:9091"]
+        labels:
+          service: streaming-engine
+
+  - job_name: bff-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["bff-api:8080"]
+        labels:
+          service: bff-api

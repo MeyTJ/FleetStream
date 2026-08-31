@@ -1,25 +1,21 @@
 ﻿using Asp.Versioning;
 using FleetStream.Application.Features.FleetAlerts.Acknowledge;
+using FleetStream.Application.Features.FleetAlerts.List;
 using FleetStream.Application.Features.FleetSummary.Get;
 using FleetStream.Application.Features.FleetTrucks.GetState;
+using FleetStream.Application.Features.FleetTrucks.GetTelemetry;
 using FleetStream.Application.Features.FleetTrucks.GetTruck;
 using FleetStream.Application.Features.FleetTrucks.List;
 using FleetStream.Application.Shared.Messaging;
+using FleetStream.Application.Shared.Pagination;
 using FleetStream.Application.Shared.Results;
 using FleetStream.Core.Domain.Entities;
+using FleetStream.Infrastructure.Metrics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FleetStream.Presentation.Controllers;
 
-/// <summary>
-/// Versioned REST surface for fleet operations. Authorization is
-/// policy-based (see <c>Program.cs</c>): <c>FleetReader</c> for read
-/// endpoints, <c>FleetAdmin</c> for write endpoints, <c>AlertsAck</c> for
-/// acknowledgement. Each action depends on a single, explicit handler
-/// interface — there is no in-process mediator, no service-layer
-/// indirection. This is the Vertical Slice flavour the project uses.
-/// </summary>
 [ApiController]
 [Authorize]
 [ApiVersion("1.0")]
@@ -29,27 +25,33 @@ namespace FleetStream.Presentation.Controllers;
 [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
 public sealed class FleetController : ControllerBase
 {
-    private readonly IQueryHandler<GetFleetSummaryQuery,  FleetSummaryDto>    _getSummary;
-    private readonly IQueryHandler<GetTruckStatesQuery,   IReadOnlyList<TruckState>> _getTruckStates;
-    private readonly IQueryHandler<GetTruckStateQuery,    TruckState?>        _getTruckState;
-    private readonly IQueryHandler<GetTruckQuery,         Truck?>            _getTruck;
-    private readonly ICommandHandler<AcknowledgeAlertCommand, Result>          _acknowledgeAlert;
+    private readonly IQueryHandler<GetFleetSummaryQuery, FleetSummaryDto> _getSummary;
+    private readonly IQueryHandler<GetTruckStatesQuery, Page<TruckState>> _getTruckStates;
+    private readonly IQueryHandler<GetTruckStateQuery, TruckState?> _getTruckState;
+    private readonly IQueryHandler<GetTruckQuery, Truck?> _getTruck;
+    private readonly IQueryHandler<ListAlertsQuery, Page<Alert>> _listAlerts;
+    private readonly IQueryHandler<GetTruckTelemetryQuery, IReadOnlyList<TruckTelemetry>> _getTelemetry;
+    private readonly ICommandHandler<AcknowledgeAlertCommand, Result> _acknowledgeAlert;
     private readonly ILogger<FleetController> _logger;
 
     public FleetController(
         IQueryHandler<GetFleetSummaryQuery, FleetSummaryDto> getSummary,
-        IQueryHandler<GetTruckStatesQuery, IReadOnlyList<TruckState>> getTruckStates,
+        IQueryHandler<GetTruckStatesQuery, Page<TruckState>> getTruckStates,
         IQueryHandler<GetTruckStateQuery, TruckState?> getTruckState,
         IQueryHandler<GetTruckQuery, Truck?> getTruck,
+        IQueryHandler<ListAlertsQuery, Page<Alert>> listAlerts,
+        IQueryHandler<GetTruckTelemetryQuery, IReadOnlyList<TruckTelemetry>> getTelemetry,
         ICommandHandler<AcknowledgeAlertCommand, Result> acknowledgeAlert,
         ILogger<FleetController> logger)
     {
-        _getSummary      = getSummary;
-        _getTruckStates  = getTruckStates;
-        _getTruckState   = getTruckState;
-        _getTruck        = getTruck;
+        _getSummary       = getSummary;
+        _getTruckStates   = getTruckStates;
+        _getTruckState    = getTruckState;
+        _getTruck         = getTruck;
+        _listAlerts       = listAlerts;
+        _getTelemetry     = getTelemetry;
         _acknowledgeAlert = acknowledgeAlert;
-        _logger          = logger;
+        _logger           = logger;
     }
 
     [HttpGet("summary", Name = "GetFleetSummary")]
@@ -60,10 +62,13 @@ public sealed class FleetController : ControllerBase
 
     [HttpGet("trucks", Name = "GetTruckStates")]
     [Authorize(Policy = "FleetReader")]
-    [ProducesResponseType(typeof(IReadOnlyList<TruckState>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<IReadOnlyList<TruckState>>> GetTruckStates(
-        [FromQuery] int skip, [FromQuery] int take, CancellationToken cancellationToken)
-        => Ok(await _getTruckStates.Handle(new GetTruckStatesQuery(skip, take), cancellationToken));
+    [ProducesResponseType(typeof(Page<TruckState>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<Page<TruckState>>> GetTruckStates(
+        [FromQuery] string? cursor,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] string? status = null,
+        CancellationToken cancellationToken = default)
+        => Ok(await _getTruckStates.Handle(new GetTruckStatesQuery(cursor, pageSize, status), cancellationToken));
 
     [HttpGet("trucks/{truckId}/state", Name = "GetTruckState")]
     [Authorize(Policy = "FleetReader")]
@@ -89,6 +94,44 @@ public sealed class FleetController : ControllerBase
         return Ok(truck);
     }
 
+    [HttpGet("trucks/{truckId}/telemetry", Name = "GetTruckTelemetry")]
+    [Authorize(Policy = "FleetReader")]
+    [ProducesResponseType(typeof(IReadOnlyList<TruckTelemetry>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<IReadOnlyList<TruckTelemetry>>> GetTruckTelemetry(
+        string truckId,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] int limit = 200,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var samples = await _getTelemetry.Handle(
+                new GetTruckTelemetryQuery(truckId, from, to, limit),
+                cancellationToken);
+            return Ok(samples);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ProblemDetails { Title = "Validation failed", Detail = ex.Message });
+        }
+    }
+
+    [HttpGet("alerts", Name = "ListAlerts")]
+    [Authorize(Policy = "FleetReader")]
+    [ProducesResponseType(typeof(Page<Alert>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<Page<Alert>>> ListAlerts(
+        [FromQuery] string? cursor,
+        [FromQuery] int pageSize = 100,
+        [FromQuery] string? severity = null,
+        [FromQuery] string? truckId = null,
+        [FromQuery] bool onlyActive = true,
+        CancellationToken cancellationToken = default)
+        => Ok(await _listAlerts.Handle(
+            new ListAlertsQuery(cursor, pageSize, severity, truckId, onlyActive),
+            cancellationToken));
+
     [HttpPost("alerts/{id}/acknowledge", Name = "AcknowledgeAlert")]
     [Authorize(Policy = "AlertsAck")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -103,15 +146,17 @@ public sealed class FleetController : ControllerBase
             new AcknowledgeAlertCommand(id, body.AcknowledgedBy),
             cancellationToken);
 
-        return result.IsSuccess
-            ? Ok()
-            : NotFound(new ProblemDetails { Title = "Acknowledge failed", Detail = result.Error?.Message });
+        if (result.IsSuccess)
+        {
+            BffMetrics.AlertsAcknowledgedTotal.Add(1,
+                new KeyValuePair<string, object?>("severity", "unknown"));
+            return Ok();
+        }
+
+        return NotFound(new ProblemDetails { Title = "Acknowledge failed", Detail = result.Error?.Message });
     }
 }
 
-/// <summary>
-/// Body for the <c>POST /api/v1/fleet/alerts/{id}/acknowledge</c> endpoint.
-/// </summary>
 public sealed class AcknowledgeAlertBody
 {
     public string AcknowledgedBy { get; set; } = string.Empty;

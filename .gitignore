@@ -1,7 +1,8 @@
 # =============================================================================
 # FleetStream – Repository-level .gitignore
 # Applies to the whole monorepo. Per-project .gitignore files (BffApi,
-# ingress-gateway, streaming-engine) contain technology-specific rules.
+# ingress-gateway, streaming-engine, frontend, tools) contain technology-specific
+# rules.
 # =============================================================================
 
 # --- Secrets & local configuration (never commit) -----------------------------
@@ -19,21 +20,29 @@ secrets/
 !*.cert
 appsettings.*.local.json
 appsettings.Local.json
+ops/k8s/secret.yaml
+!ops/k8s/secret.yaml.example
 
-# --- Logs ---------------------------------------------------------------------
+# --- Logs & local run artifacts -----------------------------------------------
 *.log
 logs/
 LogOutput/
 *.log.*
 nohup.out
+*.err
+*.out
+!**/*.out.example
 
-# --- Coverage & diagnostic artifacts -----------------------------------------
+# --- Generated / tool outputs (monorepo-wide) ---------------------------------
+outputs/
+tools/**/outputs/
+
+# --- Coverage & diagnostic artifacts ------------------------------------------
 *.coverage
 *.coveragexml
 coverage/
 *.dtr
 *.dsr
-*.coverage
 
 # --- OS metadata --------------------------------------------------------------
 # Windows
@@ -63,12 +72,13 @@ $RECYCLE.BIN/
 .Trash-*
 .nfs*
 
-# --- IDEs & editors ----------------------------------------------------------
+# --- IDEs & editors -----------------------------------------------------------
 # Visual Studio / Rider / VS Code
 .vs/
 .vscode/
 !.vscode/extensions.json
 !.vscode/settings.json.example
+!.vscode/launch.json.example
 .idea/
 *.user
 *.suo
@@ -78,7 +88,7 @@ $RECYCLE.BIN/
 *.swo
 *.swn
 
-# --- Build output (root-level only; per-project rules cover the rest) ---------
+# --- Build output (root-level; per-project rules cover the rest) --------------
 [Bb]in/
 [Oo]bj/
 out/
@@ -90,12 +100,17 @@ target/
 *.pdb
 !*.exe.config
 
+# --- Docker (local overrides only) --------------------------------------------
+docker-compose.override.yml
+.docker/
+docker/.volumes/
+docker/data/
+
 # --- Temporary / scratch files ------------------------------------------------
 *.tmp
 *.bak
 *.orig
 *.rej
-*.swp
 .cache/
 .temp/
 tmp/

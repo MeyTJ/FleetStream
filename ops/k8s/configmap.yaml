@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleetstream-config
+  namespace: fleetstream
+data:
+  KAFKA_BROKERS: "kafka.fleetstream.svc.cluster.local:9092"
+  KAFKA_TLS_ENABLED: "true"
+  KAFKA_CA_CERT_PATH: "/etc/fleetstream/certs/kafka-ca.pem"
+  HTTP_PORT: "8080"
+  LOG_LEVEL: "info"
+  REDIS_ADDR: "redis.fleetstream.svc.cluster.local:6379"
+  ASPNETCORE_ENVIRONMENT: "Production"
+  Jwt__Audience: "fleetstream-bff"
+  Features__DevToken: "false"

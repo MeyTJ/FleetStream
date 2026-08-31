@@ -12,7 +12,9 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/fleetstream/streaming-engine/internal/metrics"
+	"github.com/fleetstream/streaming-engine/internal/observability"
 	"github.com/fleetstream/streaming-engine/pkg/config"
+	"github.com/fleetstream/streaming-engine/pkg/kafkasecurity"
 	"github.com/sirupsen/logrus"
 )
 
@@ -21,18 +23,20 @@ type MessageHandler func(ctx context.Context, msg *sarama.ConsumerMessage) error
 
 // ExactlyOnceConsumer is a Kafka consumer with exactly-once processing semantics
 type ExactlyOnceConsumer struct {
-	brokers     []string
-	topic       string
-	groupID     string
-	cfg         *config.ConsumerConfig
-	logger      *logrus.Logger
-	metrics     *metrics.Metrics
-	handler     MessageHandler
-	client      sarama.ConsumerGroup
-	topics      []string
-	consumer    sarama.ConsumerGroupHandler
-	wg          sync.WaitGroup
-	closed      atomic.Bool
+	brokers  []string
+	topic    string
+	groupID  string
+	cfg      *config.ConsumerConfig
+	logger   *logrus.Logger
+	metrics  *metrics.Metrics
+	handler  MessageHandler
+	client   sarama.ConsumerGroup
+	topics   []string
+	consumer sarama.ConsumerGroupHandler
+	wg       sync.WaitGroup
+	inFlight sync.WaitGroup
+	sessionActive atomic.Bool
+	closed   atomic.Bool
 }
 
 // NewExactlyOnceConsumer creates a new exactly-once Kafka consumer
@@ -46,28 +50,31 @@ func NewExactlyOnceConsumer(
 	handler MessageHandler,
 ) (*ExactlyOnceConsumer, error) {
 	saramaConfig := sarama.NewConfig()
-	
+
 	// Idempotent consumer settings
 	saramaConfig.Consumer.Offsets.Initial = sarama.OffsetNewest
 	if cfg.StartOffset == "earliest" {
 		saramaConfig.Consumer.Offsets.Initial = sarama.OffsetOldest
 	}
-	
+
 	// Performance settings
 	saramaConfig.Consumer.MaxWaitTime = cfg.MaxWaitTime
 	saramaConfig.Consumer.Group.Session.Timeout = cfg.SessionTimeout
 	saramaConfig.Consumer.Group.Rebalance.Timeout = 60 * time.Second
 	saramaConfig.Consumer.Group.Heartbeat.Interval = 3 * time.Second
 	saramaConfig.Consumer.Return.Errors = true
-	
+
 	// Exactly-once: read only committed messages
 	saramaConfig.Consumer.IsolationLevel = sarama.ReadCommitted
-	
+
 	// Manual offset management for exactly-once
 	saramaConfig.Consumer.Offsets.AutoCommit.Enable = false
-	
+
 	// Version compatibility
 	saramaConfig.Version = sarama.V2_8_0_0
+	if err := kafkasecurity.Apply(saramaConfig, kafkasecurity.FromEnv()); err != nil {
+		return nil, fmt.Errorf("kafka security: %w", err)
+	}
 
 	client, err := sarama.NewConsumerGroup(brokers, groupID, saramaConfig)
 	if err != nil {
@@ -84,19 +91,39 @@ func NewExactlyOnceConsumer(
 		handler:  handler,
 		client:   client,
 		topics:   []string{topic},
-		consumer: &consumerGroupHandler{logger: logger, metrics: m, handler: handler},
 	}
+	c.consumer = &consumerGroupHandler{logger: logger, metrics: m, handler: handler, parent: c}
 
 	return c, nil
+}
+
+// IsReady reports whether the consumer has an active group session.
+func (c *ExactlyOnceConsumer) IsReady() bool {
+	return !c.closed.Load() && c.sessionActive.Load()
+}
+
+// WaitForInflight waits for in-flight message handlers to finish.
+func (c *ExactlyOnceConsumer) WaitForInflight(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		c.inFlight.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		c.logger.Warn("timed out waiting for in-flight messages")
+	}
 }
 
 // Start begins consuming messages
 func (c *ExactlyOnceConsumer) Start(ctx context.Context) error {
 	c.wg.Add(1)
-	
+
 	go func() {
 		defer c.wg.Done()
-		
+
 		for {
 			if c.closed.Load() {
 				return
@@ -135,7 +162,7 @@ func (c *ExactlyOnceConsumer) Close() error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	
+
 	c.logger.Info("closing consumer")
 	return c.client.Close()
 }
@@ -150,10 +177,14 @@ type consumerGroupHandler struct {
 	logger  *logrus.Logger
 	metrics *metrics.Metrics
 	handler MessageHandler
+	parent  *ExactlyOnceConsumer
 }
 
 // Setup is called when a new session is opened
 func (h *consumerGroupHandler) Setup(_ sarama.ConsumerGroupSession) error {
+	if h.parent != nil {
+		h.parent.sessionActive.Store(true)
+	}
 	h.logger.Info("consumer group session established")
 	h.metrics.ConsumerRebalances.Inc()
 	return nil
@@ -161,6 +192,9 @@ func (h *consumerGroupHandler) Setup(_ sarama.ConsumerGroupSession) error {
 
 // Cleanup is called when a session is closed
 func (h *consumerGroupHandler) Cleanup(_ sarama.ConsumerGroupSession) error {
+	if h.parent != nil {
+		h.parent.sessionActive.Store(false)
+	}
 	h.logger.Info("consumer group session ended")
 	return nil
 }
@@ -186,10 +220,23 @@ func (h *consumerGroupHandler) ConsumeClaim(
 
 			start := time.Now()
 			h.metrics.MessagesConsumed.WithLabelValues(message.Topic, fmt.Sprint(message.Partition)).Inc()
+			lag := claim.HighWaterMarkOffset() - message.Offset - 1
+			if lag < 0 {
+				lag = 0
+			}
+			h.metrics.ConsumerLag.WithLabelValues(message.Topic, fmt.Sprint(message.Partition)).Set(float64(lag))
 
-			// Process message
+			correlationID, traceparent := observability.FromKafkaHeaders(message.Headers)
 			ctx, cancel := context.WithTimeout(session.Context(), 30*time.Second)
+			ctx, _, _ = observability.Ensure(ctx, correlationID, traceparent)
+
+			if h.parent != nil {
+				h.parent.inFlight.Add(1)
+			}
 			err := h.handler(ctx, message)
+			if h.parent != nil {
+				h.parent.inFlight.Done()
+			}
 			cancel()
 
 			if err != nil {
@@ -199,14 +246,12 @@ func (h *consumerGroupHandler) ConsumeClaim(
 					WithField("offset", message.Offset).
 					Error("message processing failed")
 				h.metrics.ConsumerErrors.WithLabelValues("processing").Inc()
-				// Mark for retry or send to DLQ in handler
+				continue
 			}
 
-			// Mark message as processed (exactly-once guarantee)
 			session.MarkMessage(message, "")
-			
 			h.metrics.ProcessingDuration.WithLabelValues("consume").Observe(time.Since(start).Seconds())
-			
+
 		case <-session.Context().Done():
 			return nil
 		}

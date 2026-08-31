@@ -3,24 +3,41 @@
 //  Composition root. Pure-DI vertical slice wiring + the Decorator pattern.
 // =============================================================================
 
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using Asp.Versioning;
+using Confluent.Kafka;
 using FleetStream.Application.Abstractions;
+using FleetStream.Application.Features.FleetAlerts.Acknowledge;
 using FleetStream.Application.Shared.Decorators;
 using FleetStream.Application.Shared.Messaging;
 using FleetStream.Infrastructure.Caching;
+using FleetStream.Infrastructure.Graphify;
+using FleetStream.Infrastructure.Messaging;
+using FleetStream.Infrastructure.Metrics;
 using FleetStream.Infrastructure.Options;
 using FleetStream.Infrastructure.Services;
 using FleetStream.Presentation.Auth;
+using FleetStream.Presentation.Controllers;
+using FleetStream.Presentation.Hosting;
+using FleetStream.Presentation.Hubs;
 using FleetStream.Presentation.Middleware;
+using FleetStream.Presentation.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.FeatureManagement;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Yarp.ReverseProxy.Transforms;
+using Microsoft.Extensions.Http.Resilience;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -29,16 +46,29 @@ using StackExchange.Redis;
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
 var services = builder.Services;
+var otel = config.GetSection("OpenTelemetry").Get<OpenTelemetryOptions>() ?? new OpenTelemetryOptions();
+
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(o =>
+{
+    o.IncludeScopes = true;
+    o.TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'";
+    o.UseUtcTimestamp = true;
+});
 
 // -----------------------------------------------------------------------------
 //  Strongly-typed options
 // -----------------------------------------------------------------------------
 services.AddOptions<RedisOptions>().Bind(config.GetSection("Redis")).ValidateDataAnnotations().ValidateOnStart();
 services.AddOptions<KafkaOptions>().Bind(config.GetSection("Kafka")).ValidateDataAnnotations().ValidateOnStart();
+services.AddSingleton<IValidateOptions<JwtOptions>, JwtOptionsValidator>();
 services.AddOptions<JwtOptions>().Bind(config.GetSection("Jwt")).ValidateDataAnnotations().ValidateOnStart();
 services.AddOptions<SignalROptions>().Bind(config.GetSection("SignalR")).ValidateDataAnnotations().ValidateOnStart();
 services.AddOptions<RateLimitOptions>().Bind(config.GetSection("RateLimiting")).ValidateDataAnnotations().ValidateOnStart();
 services.AddOptions<OpenTelemetryOptions>().Bind(config.GetSection("OpenTelemetry")).ValidateDataAnnotations().ValidateOnStart();
+services.AddOptions<FeaturesOptions>().Bind(config.GetSection(FeaturesOptions.SectionName)).ValidateOnStart();
+services.AddFeatureManagement(config.GetSection(FeaturesOptions.SectionName));
+services.AddGraphifyServices();
 
 // -----------------------------------------------------------------------------
 //  JSON
@@ -74,7 +104,14 @@ services.AddSingleton<IConnectionMultiplexer>(sp =>
 services.AddScoped<ICacheService,        RedisCacheService>();
 services.AddScoped<ITruckStateStore,     RedisTruckStateStore>();
 services.AddScoped<ITruckRepository,     InMemoryTruckRepository>();
-services.AddScoped<INotificationService, SignalRNotificationService>();
+services.AddScoped<IAlertService,           RedisAlertService>();
+services.AddScoped<ITelemetryHistoryStore,  RedisTelemetryHistoryStore>();
+services.AddScoped<INotificationService,      SignalRNotificationService>();
+
+// Kafka consumers (M2 per the roadmap). Soft-start: log a warning if the
+// broker is unreachable instead of crashing the host.
+services.AddHostedService<KafkaTelemetryConsumer>();
+services.AddHostedService<KafkaAlertConsumer>();
 
 // -----------------------------------------------------------------------------
 //  Vertical-slice handlers  (pure DI + Decorator pattern)
@@ -86,13 +123,16 @@ services.AddScoped<INotificationService, SignalRNotificationService>();
 // -----------------------------------------------------------------------------
 var handlerAssembly   = typeof(ICommandHandler<,>).Assembly;
 var commandDecorators = new DecoratorRegistration
-    { typeof(CommandLoggingDecorator<,>) };
+    { typeof(CommandValidationDecorator<,>), typeof(CommandLoggingDecorator<,>) };
 var queryDecorators   = new DecoratorRegistration
-    { typeof(QueryLoggingDecorator<,>) };
+    { typeof(QueryValidationDecorator<,>), typeof(QueryLoggingDecorator<,>) };
 services.AddVerticalSliceHandlers(handlerAssembly, commandDecorators, queryDecorators);
 
 // FluentValidation: scan the Application assembly for every IValidator<T>.
-services.AddValidatorsFromAssemblyContaining<ValidationDecorator<object, object>>(includeInternalTypes: true);
+// Validator types themselves are still useful (controllers can inject
+// IValidator<T> directly) and may be wired into the decorator chain once
+// DecoratorApplicationExtensions supports multi-decorator composition.
+services.AddValidatorsFromAssemblyContaining<AcknowledgeAlertCommandValidator>(includeInternalTypes: true);
 
 // -----------------------------------------------------------------------------
 //  SignalR  (with Redis backplane)
@@ -131,6 +171,20 @@ services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     {
         o.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
         o.SaveToken            = true;
+        o.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    path.StartsWithSegments("/hubs", StringComparison.OrdinalIgnoreCase))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
+        };
         o.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer           = true,
@@ -140,12 +194,24 @@ services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime         = true,
             ClockSkew                = TimeSpan.FromSeconds(jwt.ClockSkewSeconds),
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey         = string.IsNullOrWhiteSpace(jwt.SigningKey)
-                ? null
-                : new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwt.SigningKey)),
-            NameClaimType = "sub",
+            NameClaimType            = "sub",
         };
+
+        if (builder.Environment.IsDevelopment())
+        {
+            o.TokenValidationParameters.IssuerSigningKey =
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SigningKey));
+        }
+        else
+        {
+            var jwksProvider = new JwksSigningKeyProvider(jwt.JwksUri, new HttpClient());
+            o.TokenValidationParameters.IssuerSigningKeyResolver = (_, _, kid, _) =>
+                jwksProvider.Resolve(kid);
+        }
     });
+
+if (builder.Environment.IsDevelopment())
+    services.AddSingleton<DevTokenIssuer>();
 
 services.AddAuthorization(o =>
 {
@@ -154,8 +220,13 @@ services.AddAuthorization(o =>
     o.AddPolicy("AlertsAck",   p => p.RequireRole("alerts:ack",  "fleet:admin"));
 });
 
-if (builder.Environment.IsDevelopment())
-    services.AddSingleton<DevTokenIssuer>();
+var controllers = services.AddControllers();
+if (!builder.Environment.IsDevelopment())
+{
+    controllers.ConfigureApplicationPartManager(manager =>
+        manager.FeatureProviders.Add(
+            new DevelopmentOnlyControllerFeatureProvider(builder.Environment, typeof(AuthController))));
+}
 
 // -----------------------------------------------------------------------------
 //  API versioning
@@ -174,23 +245,38 @@ services.AddApiVersioning(o =>
 // -----------------------------------------------------------------------------
 //  Health checks
 // -----------------------------------------------------------------------------
+var kafkaOpts = config.GetSection(KafkaOptions.SectionName).Get<KafkaOptions>() ?? new KafkaOptions();
+var kafkaBrokers = kafkaOpts.Brokers
+    ?? config.GetConnectionString("Kafka")
+    ?? "localhost:9092";
+kafkaOpts.Brokers = kafkaBrokers;
+
+var kafkaHealthConfig = new ProducerConfig { BootstrapServers = kafkaBrokers };
+KafkaClientConfig.ApplySecurity(kafkaHealthConfig, kafkaOpts);
+
 services.AddHealthChecks()
-    .AddRedis(config.GetConnectionString("Redis") ?? "localhost:6379", name: "redis", tags: new[] { "ready", "live" })
-    .AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy("self"), tags: new[] { "ready", "live" });
+    .AddRedis(config.GetConnectionString("Redis") ?? "localhost:6379", name: "redis", tags: new[] { "ready" })
+    .AddKafka(kafkaHealthConfig, name: "kafka", tags: new[] { "ready" })
+    .AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy("self"), tags: new[] { "ready" });
 
 // -----------------------------------------------------------------------------
 //  Rate limiting
 // -----------------------------------------------------------------------------
+var rateLimitOpts = config.GetSection(RateLimitOptions.SectionName).Get<RateLimitOptions>() ?? new RateLimitOptions();
+
 services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    o.AddPolicy("fixed", httpContext =>
+    o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
-        var partition = httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+        if (RateLimitExemptions.IsExempt(context))
+            return RateLimitPartition.GetNoLimiter("exempt");
+
+        var partition = context.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
         return RateLimitPartition.GetFixedWindowLimiter(partition, _ => new FixedWindowRateLimiterOptions
         {
-            PermitLimit = 1000,
-            Window      = TimeSpan.FromMinutes(1),
+            PermitLimit = rateLimitOpts.GlobalPermitLimit,
+            Window      = TimeSpan.FromSeconds(rateLimitOpts.GlobalWindowSeconds),
             QueueLimit  = 0,
             QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
             AutoReplenishment = true,
@@ -232,13 +318,38 @@ services.AddSwaggerGen(o =>
 // -----------------------------------------------------------------------------
 //  YARP
 // -----------------------------------------------------------------------------
+services.ConfigureHttpClientDefaults(http =>
+{
+    http.AddStandardResilienceHandler();
+});
+
 services.AddReverseProxy()
-    .LoadFromConfig(config.GetSection("ReverseProxy"));
+    .LoadFromConfig(config.GetSection("ReverseProxy"))
+    .AddTransforms(builder =>
+    {
+        builder.AddRequestTransform(transformContext =>
+        {
+            var correlationId = transformContext.HttpContext.Items
+                .TryGetValue(CorrelationIdMiddleware.ItemKey, out var value)
+                ? value as string
+                : null;
+
+            if (!string.IsNullOrWhiteSpace(correlationId))
+            {
+                transformContext.ProxyRequest.Headers.Remove("X-Correlation-Id");
+                transformContext.ProxyRequest.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
+            }
+
+            return ValueTask.CompletedTask;
+        });
+    });
 
 // -----------------------------------------------------------------------------
 //  OpenTelemetry
 // -----------------------------------------------------------------------------
-var otel = config.GetSection("OpenTelemetry").Get<OpenTelemetryOptions>() ?? new OpenTelemetryOptions();
+var useOtlpExporter = !builder.Environment.IsDevelopment()
+    && !string.IsNullOrWhiteSpace(otel.OtlpEndpoint);
+
 services.AddOpenTelemetry()
     .ConfigureResource(r => r
         .AddService(serviceName: otel.ServiceName, serviceVersion: otel.ServiceVersion)
@@ -251,17 +362,28 @@ services.AddOpenTelemetry()
         t.AddSource("FleetStream.*");
         t.AddAspNetCoreInstrumentation();
         t.AddHttpClientInstrumentation();
-        if (!string.IsNullOrWhiteSpace(otel.OtlpEndpoint))
+        if (useOtlpExporter)
             t.AddOtlpExporter(o => o.Endpoint = new Uri(otel.OtlpEndpoint));
     })
     .WithMetrics(m =>
     {
+        m.AddMeter(BffMetrics.MeterName);
         m.AddRuntimeInstrumentation();
         m.AddAspNetCoreInstrumentation();
         m.AddHttpClientInstrumentation();
         if (otel.PrometheusEnabled)
             m.AddPrometheusExporter();
+        if (useOtlpExporter)
+            m.AddOtlpExporter(o => o.Endpoint = new Uri(otel.OtlpEndpoint));
     });
+
+if (useOtlpExporter)
+{
+    builder.Logging.AddOpenTelemetry(logging =>
+    {
+        logging.AddOtlpExporter(o => o.Endpoint = new Uri(otel.OtlpEndpoint));
+    });
+}
 
 services.Configure<ForwardedHeadersOptions>(o =>
 {
@@ -272,9 +394,19 @@ services.Configure<ForwardedHeadersOptions>(o =>
 
 var app = builder.Build();
 
+StartupConfigurationLogger.LogEffectiveConfiguration(
+    config,
+    app.Logger,
+    app.Environment,
+    config.GetSection(FeaturesOptions.SectionName).Get<FeaturesOptions>() ?? new FeaturesOptions());
+
 app.UseForwardedHeaders();
+app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+if (!app.Environment.IsDevelopment())
+    app.UseHsts();
 
 if (app.Environment.IsDevelopment())
 {
@@ -292,6 +424,7 @@ app.UseCors("AllowFrontend");
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<AuditLoggingMiddleware>();
 
 app.MapControllers();
 app.MapHub<FleetHub>("/hubs/v1/fleet");

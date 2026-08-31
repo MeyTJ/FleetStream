@@ -86,10 +86,10 @@ public static class DecoratorApplicationExtensions
         // wrapper, so the chain reads:
         //   service -> closedDecorators[^1] -> ... -> closedDecorators[0] -> inner
         // Each "s.Add" replaces the previous binding for that key.
-        // Register the inner handler under the service interface, but only if
-        // it is not already there. This lets two decorators share the same
-        // inner (e.g. a chain of decorators for the same handler).
-        s.TryAdd(new ServiceDescriptor(service, inner, ServiceLifetime.Scoped));
+        // Register the concrete handler by its own type so the innermost
+        // decorator resolves the real handler, not the decorated service
+        // interface (which is later bound to the outermost wrapper).
+        s.TryAdd(new ServiceDescriptor(inner, inner, ServiceLifetime.Scoped));
 
         // Build the chain from outside-in. Each decorator is registered as
         // a closed generic, and the LAST `s.Add` for the service interface
@@ -108,43 +108,58 @@ public static class DecoratorApplicationExtensions
             var outerClosed = closedDecorators[i];
             var innerClosed = closedDecorators[i + 1];
             s.Add(new ServiceDescriptor(outerClosed, sp =>
-            {
-                var innerInstance = sp.GetRequiredService(innerClosed);
-                var ctor          = outerClosed.GetConstructors().Single();
-                return ctor.Invoke(new object[]
-                {
-                    (Func<object>)(() => innerInstance),
-                    sp.GetServices(typeof(Microsoft.Extensions.Logging.ILogger<>).MakeGenericType(outerClosed)).First()
-                });
-            }, ServiceLifetime.Scoped));
+                CreateDecorator(sp, outerClosed, innerClosed), ServiceLifetime.Scoped));
         }
-        // The innermost decorator's inner is the concrete handler.
         var innermostClosed = closedDecorators[^1];
         s.Add(new ServiceDescriptor(innermostClosed, sp =>
-        {
-            var innerInstance = sp.GetRequiredService(service);
-            var ctor          = innermostClosed.GetConstructors().Single();
-            return ctor.Invoke(new object[]
-            {
-                (Func<object>)(() => innerInstance),
-                sp.GetServices(typeof(Microsoft.Extensions.Logging.ILogger<>).MakeGenericType(innermostClosed)).First()
-            });
-        }, ServiceLifetime.Scoped));
-        // The service interface resolves to the outermost decorator.
+            CreateDecorator(sp, innermostClosed, inner), ServiceLifetime.Scoped));
         s.Add(new ServiceDescriptor(service, sp => sp.GetRequiredService(closedDecorators[0]), ServiceLifetime.Scoped));
+    }
 
-        // The TWO `s.Add` calls for `IQueryHandler<,>` and `ICommandHandler<,>`
-        // co-exist for the same concrete handler class. When the chain asks
-        // `CommandLoggingDecorator<,>` for its inner `ICommandHandler<,>`,
-        // DI may still hold an `IQueryHandler<,>` registration from a
-        // previous handler in the assembly. To prevent the cross-pollution we
-        // also bind each closed decorator under the OPPOSITE service interface
-        // to itself so DI's first-match wins. This is a no-op for the correct
-        // resolution path but eliminates the multi-ctor ambiguity.
-        // (Concretely: CommandLoggingDecorator is registered under
-        // ICommandHandler -> ICommandHandler(==self) and under
-        // IQueryHandler -> IQueryHandler(==self) so DI never picks the wrong ctor.)
-        // Note: done by the inner ctor-selection logic below.
+    private static object CreateDecorator(IServiceProvider sp, Type decoratorClosed, Type innerServiceType)
+    {
+        var ctor = decoratorClosed.GetConstructors().Single();
+        var args = new object[ctor.GetParameters().Length];
+        for (var i = 0; i < ctor.GetParameters().Length; i++)
+        {
+            var param = ctor.GetParameters()[i];
+            if (IsFunc(param.ParameterType))
+                args[i] = CreateInnerFactory(sp, innerServiceType, param.ParameterType);
+            else
+                args[i] = ResolveParameter(sp, param.ParameterType);
+        }
+        return ctor.Invoke(args)!;
+    }
+
+    private static bool IsFunc(Type type) =>
+        type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Func<>);
+
+    private static object CreateInnerFactory(IServiceProvider sp, Type innerServiceType, Type funcType)
+    {
+        var innerType = funcType.GetGenericArguments()[0];
+        var resolve = () => sp.GetRequiredService(innerServiceType);
+        var method  = typeof(DecoratorApplicationExtensions)
+            .GetMethod(nameof(DelegateFactory), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(innerType);
+        return method.Invoke(null, new object[] { resolve })!;
+    }
+
+    private static Func<T> DelegateFactory<T>(Func<object> resolve) where T : notnull =>
+        () => (T)resolve();
+
+    private static object ResolveParameter(IServiceProvider sp, Type type)
+    {
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+        {
+            var elementType = type.GetGenericArguments()[0];
+            var listType    = typeof(List<>).MakeGenericType(elementType);
+            var list        = Activator.CreateInstance(listType)!;
+            var add         = listType.GetMethod("Add")!;
+            foreach (var service in sp.GetServices(elementType))
+                add.Invoke(list, new[] { service });
+            return list;
+        }
+        return sp.GetRequiredService(type);
     }
 
     private static bool HasHandleMethod(Type t) =>

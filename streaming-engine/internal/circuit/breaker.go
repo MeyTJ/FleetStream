@@ -44,12 +44,12 @@ type CircuitBreaker struct {
 func NewCircuitBreaker(name string, threshold int64, timeout time.Duration) *CircuitBreaker {
 	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
 		Name:        name,
-		MaxRequests: 3,                  // Requests allowed in half-open state
-		Interval:    10 * time.Second,   // Cyclic period for clearing counts
-		Timeout:     timeout,            // Time the circuit stays open
+		MaxRequests: 3,                // Requests allowed in half-open state
+		Interval:    10 * time.Second, // Cyclic period for clearing counts
+		Timeout:     timeout,          // Time the circuit stays open
 		ReadyToTrip: func(counts gobreaker.Counts) bool {
 			failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
-			return counts.TotalFailures >= threshold || failureRatio >= 0.6
+			return counts.TotalFailures >= uint32(threshold) || failureRatio >= 0.6
 		},
 		OnStateChange: func(name string, from, to gobreaker.State) {
 			// State change callback - could log here

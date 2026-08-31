@@ -68,7 +68,55 @@ streaming-engine/
 └── README.md
 ```
 
+## Quick Start
+
+```bash
+go build -o streaming-engine ./cmd/processor
+./streaming-engine
+```
+
+Integration tests (requires Kafka + Redis, e.g. `docker compose up -d kafka redis`):
+
+```bash
+make integration
+```
+
 ## Configuration
+
+Config loads in order: defaults → optional YAML (`CONFIG_FILE`) → environment variables (highest precedence).
+
+| Variable | Maps to | Default |
+|---|---|---|
+| `CONFIG_FILE` | YAML overlay path | unset |
+| `KAFKA_BROKERS` | Consumer, Producer, and DLQ brokers (comma-separated) | `localhost:9092` |
+| `CONSUMER_BROKERS` | `Consumer.Brokers` (overrides `KAFKA_BROKERS`) | `localhost:9092` |
+| `CONSUMER_TOPIC` | `Consumer.Topic` | `fleet.telemetry.raw` |
+| `CONSUMER_GROUP_ID` | `Consumer.GroupID` | `fleetstream-streaming-processor` |
+| `CONSUMER_START_OFFSET` | `Consumer.StartOffset` (`earliest` / `newest`) | `earliest` |
+| `PRODUCER_BROKERS` | `Producer.Brokers` (overrides `KAFKA_BROKERS`) | `localhost:9092` |
+| `PRODUCER_TOPIC` | `Producer.Topic` | `fleet.telemetry.processed` |
+| `PRODUCER_COMPRESSION` | `Producer.Compression` | `snappy` |
+| `PRODUCER_IDEMPOTENT` | `Producer.Idempotent` | `true` |
+| `REDIS_ADDRESSES` | `Redis.Addresses` (comma-separated) | `localhost:6379` |
+| `REDIS_ADDR` | alias for `REDIS_ADDRESSES` | `localhost:6379` |
+| `REDIS_PASSWORD` | `Redis.Password` | empty |
+| `REDIS_DB` | `Redis.DB` | `0` |
+| `REDIS_CLUSTER` | `Redis.Cluster` (auto-enabled when multiple addresses) | `false` |
+| `IDEMPOTENCY_ENABLED` | `Idempotency.Enabled` | `true` |
+| `IDEMPOTENCY_DROP_DUPLICATES` | `Idempotency.DropDuplicates` | `true` |
+| `DLQ_ENABLED` | `DLQ.Enabled` | `true` |
+| `DLQ_TOPIC` | `DLQ.Topic` | `fleet.telemetry.dlq` |
+| `DLQ_BROKERS` | `DLQ.Brokers` (overrides `KAFKA_BROKERS`) | `localhost:9092` |
+| `DLQ_RETRY_ATTEMPTS` | `DLQ.RetryAttempts` | `3` |
+| `DLQ_RETRY_BACKOFF` | `DLQ.RetryBackoff` | `5s` |
+| `METRICS_ENABLED` | `Metrics.Enabled` | `true` |
+| `METRICS_PORT` | `Metrics.Port` | `9091` |
+| `METRICS_PATH` | `Metrics.Path` | `/metrics` |
+| `ADMIN_PORT` | `Admin.Port` | `8081` |
+| `LOG_LEVEL` | `Logging.Level` (`trace`, `debug`, `info`, `warn`, `error`) | `info` |
+| `SHUTDOWN_TIMEOUT` | `Shutdown.Timeout` | `60s` |
+| `ANOMALY_MAX_SPEED_KMH` | `Processing.AnomalyThreshold.MaxSpeedKmh` | `120` |
+| `ANOMALY_MAX_ENGINE_TEMP_CELSIUS` | `Processing.AnomalyThreshold.MaxEngineTempCelsius` | `110` |
 
 ```yaml
 consumer:
@@ -95,8 +143,11 @@ processing:
 
 ## API Endpoints
 
-- **Health**: `http://localhost:9092/health`
+- **Liveness**: `http://localhost:8081/health/live`
+- **Readiness**: `http://localhost:8081/health/ready`
 - **Metrics**: `http://localhost:9091/metrics`
+
+Admin endpoints accept and return `X-Correlation-Id`. Produced Kafka messages include correlation headers propagated from consumed messages.
 
 ## Resume Claims Validated
 

@@ -1,10 +1,12 @@
 # =============================================================================
-# FleetStream.ingress-gateway – Go 1.21 / gRPC / WebSocket / Kafka
+# FleetStream.ingress-gateway – Go / gRPC / WebSocket / Kafka
 # Telemetry ingestion service.
 # =============================================================================
 
-# --- Go build artifacts ------------------------------------------------------
-# Compiled binaries (one per cmd/ subpackage and loadtest tool)
+# --- Go build artifacts -------------------------------------------------------
+# Binaries built from cmd/ and module-root name
+/ingress-gateway
+/ingress-gateway.exe
 cmd/server/server
 cmd/server/server.exe
 cmd/loadtest/loadtest
@@ -16,38 +18,27 @@ cmd/loadtest/loadtest.exe
 *.so.*
 *.dylib
 *.test
-*.out
 *.prof
 *.cover
 *.coverprofile
 coverage.txt
 coverage.html
-
-# Test binary & cache
-*.test
-*.out
-*.prof
 gocoverage/
 coverage/
 htmlcov/
 
-# --- Go workspace & module cache --------------------------------------------
-# (go.sum is committed; vendor/ is optional – ignored to keep repo lean)
+# --- Go workspace & vendor ----------------------------------------------------
 vendor/
 go.work
 go.work.sum
 
-# --- Protobuf / gRPC ---------------------------------------------------------
-# Source .proto files ARE committed under proto/v1/
-# Generated Go stubs in proto/gen/v1/build.go are committed (build tag driver).
-# Only ignore the *actual* generated artifacts a developer might produce
-# locally with a stray `protoc` invocation, so they don't sneak in.
-proto/gen/v1/*.pb.go
+# --- Protobuf / gRPC ----------------------------------------------------------
+# Source .proto files and generated *.pb.go ARE committed (CI/Docker build without protoc).
+# Ignore optional gateway/swagger stubs only.
 proto/gen/v1/*.pb.gw.go
 proto/gen/v1/*.swagger.json
-!proto/gen/v1/build.go
 
-# --- Secrets & local configuration (NEVER commit) ---------------------------
+# --- Secrets & local configuration (NEVER commit) -----------------------------
 .env
 .env.*
 !.env.example
@@ -65,7 +56,7 @@ secrets/
 !*.crt
 !*.cert
 
-# --- Runtime data & ephemeral state -----------------------------------------
+# --- Runtime data & ephemeral state -------------------------------------------
 *.pid
 *.sock
 *.log
@@ -82,29 +73,25 @@ kafka-data/
 *.sqlite
 *.sqlite3
 
-# --- Docker -----------------------------------------------------------------
+# --- Docker (local overrides only) --------------------------------------------
 Dockerfile.local
 docker-compose.override.yml
-docker-compose.*.yml
-!docker-compose.yml
 .docker/
 .docker-volumes/
-*.pid
 
-# --- Prometheus / observability local snapshots ----------------------------
+# --- Prometheus / observability local snapshots -------------------------------
 metrics-snapshot.*
 prometheus-data/
 
-# --- Load test artifacts -----------------------------------------------------
+# --- Load test artifacts ------------------------------------------------------
 loadtest-results/
 loadtest/*.csv
 loadtest/*.json
 !loadtest/*.json.example
-bench.out
 bench.cpu
 bench.mem
 
-# --- IDEs & editors ---------------------------------------------------------
+# --- IDEs & editors -----------------------------------------------------------
 .vscode/
 !.vscode/extensions.json
 !.vscode/launch.json.example
@@ -114,7 +101,7 @@ bench.mem
 *.swp
 *.swo
 
-# --- OS metadata ------------------------------------------------------------
+# --- OS metadata --------------------------------------------------------------
 Thumbs.db
 .DS_Store
 Desktop.ini

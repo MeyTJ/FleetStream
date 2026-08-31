@@ -1,8 +1,12 @@
 ﻿using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using FleetStream.Infrastructure.Metrics;
+using FleetStream.Infrastructure.Options;
 using FluentValidation;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace FleetStream.Presentation.Middleware;
 
@@ -18,10 +22,19 @@ public sealed class CorrelationIdMiddleware
     public const string ItemKey    = "CorrelationId";
 
     private readonly RequestDelegate _next;
+    private readonly ILogger<CorrelationIdMiddleware> _logger;
+    private readonly string _serviceName;
+    private readonly string _serviceVersion;
 
-    public CorrelationIdMiddleware(RequestDelegate next)
+    public CorrelationIdMiddleware(
+        RequestDelegate next,
+        ILogger<CorrelationIdMiddleware> logger,
+        IOptions<OpenTelemetryOptions> otel)
     {
-        _next = next;
+        _next            = next;
+        _logger          = logger;
+        _serviceName     = otel.Value.ServiceName;
+        _serviceVersion  = otel.Value.ServiceVersion;
     }
 
     public async Task Invoke(HttpContext context)
@@ -45,7 +58,18 @@ public sealed class CorrelationIdMiddleware
             return Task.CompletedTask;
         });
 
-        await _next(context);
+        var activity = Activity.Current;
+        using (_logger.BeginScope(new Dictionary<string, object?>
+        {
+            ["correlationId"] = id,
+            ["traceId"]       = activity?.TraceId.ToString() ?? string.Empty,
+            ["spanId"]        = activity?.SpanId.ToString() ?? string.Empty,
+            ["service"]       = _serviceName,
+            ["version"]       = _serviceVersion,
+        }))
+        {
+            await _next(context);
+        }
     }
 }
 
@@ -130,4 +154,78 @@ public sealed class ExceptionHandlingMiddleware
         string.Concat(title.Select((c, i) => i > 0 && char.IsUpper(c) ? "-" + char.ToLowerInvariant(c) : c.ToString().ToLowerInvariant()))
               .Replace("--", "-")
               .Trim('-');
+}
+
+public sealed class SecurityHeadersMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly IHostEnvironment _env;
+
+    public SecurityHeadersMiddleware(RequestDelegate next, IHostEnvironment env)
+    {
+        _next = next;
+        _env  = env;
+    }
+
+    public async Task Invoke(HttpContext context)
+    {
+        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        context.Response.Headers["Referrer-Policy"]        = "no-referrer";
+        context.Response.Headers["X-Frame-Options"]        = "DENY";
+
+        if (!_env.IsDevelopment())
+            context.Response.Headers["Strict-Transport-Security"] =
+                "max-age=31536000; includeSubDomains; preload";
+
+        await _next(context);
+    }
+}
+
+public sealed class AuditLoggingMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger _auditLogger;
+
+    public AuditLoggingMiddleware(RequestDelegate next, ILoggerFactory loggerFactory)
+    {
+        _next        = next;
+        _auditLogger = loggerFactory.CreateLogger("FleetStream.Audit");
+    }
+
+    public async Task Invoke(HttpContext context)
+    {
+        var sw = Stopwatch.StartNew();
+        await _next(context);
+        sw.Stop();
+
+        if (context.User?.Identity?.IsAuthenticated != true)
+            return;
+
+        var correlationId = context.Items[CorrelationIdMiddleware.ItemKey] as string ?? string.Empty;
+        var activity      = Activity.Current;
+        var roles         = context.User.FindAll("roles").Select(c => c.Value).ToArray();
+
+        _auditLogger.LogInformation(
+            "Request {Method} {Path} {Status} {DurationMs} {Subject} {Roles} {CorrelationId} {TraceId}",
+            context.Request.Method,
+            context.Request.Path.Value,
+            context.Response.StatusCode,
+            sw.ElapsedMilliseconds,
+            context.User.FindFirst("sub")?.Value ?? string.Empty,
+            roles,
+            correlationId,
+            activity?.TraceId.ToString() ?? string.Empty);
+    }
+}
+
+public static class RateLimitExemptions
+{
+    public static bool IsExempt(HttpContext context)
+    {
+        var path = context.Request.Path.Value ?? string.Empty;
+        return path.StartsWith("/api/v1/health", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/metrics", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith("/negotiate", StringComparison.OrdinalIgnoreCase);
+    }
 }

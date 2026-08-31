@@ -1,0 +1,58 @@
+# Production overlay for docker-compose.yml
+#
+# Usage:
+#   cp .env.example .env.production   # fill in secrets
+#   docker compose -f docker-compose.yml -f docker-compose.production.yml --profile production up -d
+#
+# Dev stack with Redis password (optional):
+#   docker compose -f docker-compose.yml -f docker-compose.production.yml --profile dev up -d
+
+services:
+  redis:
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  ingress-gateway:
+    environment:
+      KAFKA_TLS_ENABLED: ${KAFKA_TLS_ENABLED:-false}
+      KAFKA_CA_CERT_PATH: ${KAFKA_CA_CERT_PATH:-}
+      KAFKA_TLS_INSECURE_SKIP_VERIFY: ${KAFKA_TLS_INSECURE_SKIP_VERIFY:-false}
+      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-}
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-}
+
+  streaming-engine:
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      KAFKA_TLS_ENABLED: ${KAFKA_TLS_ENABLED:-false}
+      KAFKA_CA_CERT_PATH: ${KAFKA_CA_CERT_PATH:-}
+      KAFKA_TLS_INSECURE_SKIP_VERIFY: ${KAFKA_TLS_INSECURE_SKIP_VERIFY:-false}
+      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-}
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-}
+
+  bff-api:
+    env_file:
+      - path: .env.production
+        required: false
+    environment:
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD},abortConnect=false"
+      Kafka__TlsEnabled: ${KAFKA_TLS_ENABLED:-false}
+      Kafka__CaCertPath: ${KAFKA_CA_CERT_PATH:-}
+      Kafka__TlsSkipVerify: ${KAFKA_TLS_INSECURE_SKIP_VERIFY:-false}
+      Kafka__SaslMechanism: ${KAFKA_SASL_MECHANISM:-}
+      Kafka__SaslUsername: ${KAFKA_SASL_USERNAME:-}
+      Kafka__SaslPassword: ${KAFKA_SASL_PASSWORD:-}
+      Jwt__Issuer: ${JWT_ISSUER:?JWT_ISSUER is required for production}
+      Jwt__Audience: ${JWT_AUDIENCE:?JWT_AUDIENCE is required for production}
+      Jwt__JwksUri: ${JWT_JWKS_URI:?JWT_JWKS_URI is required for production}
+
+  bff-api-dev:
+    environment:
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD},abortConnect=false"

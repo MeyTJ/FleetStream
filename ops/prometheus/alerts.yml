@@ -1,0 +1,106 @@
+groups:
+  - name: fleetstream-ingress
+    rules:
+      - alert: IngressGatewayDown
+        expr: up{job="ingress-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: ingress-gateway
+        annotations:
+          summary: Ingress Gateway is down
+          description: Prometheus cannot scrape ingress-gateway metrics for 2 minutes.
+
+      - alert: IngressKafkaPublishErrors
+        expr: rate(fleetstream_ingress_kafka_publish_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: ingress-gateway
+        annotations:
+          summary: Kafka publish errors on ingress-gateway
+          description: Ingress gateway is failing to publish telemetry to Kafka.
+
+      - alert: IngressBackpressureCritical
+        expr: fleetstream_ingress_backpressure_state >= 2
+        for: 3m
+        labels:
+          severity: critical
+          service: ingress-gateway
+        annotations:
+          summary: Ingress gateway backpressure critical
+          description: Backpressure state is critical; messages may be dropped.
+
+  - name: fleetstream-streaming
+    rules:
+      - alert: StreamingEngineDown
+        expr: up{job="streaming-engine"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: streaming-engine
+        annotations:
+          summary: Streaming Engine is down
+          description: Prometheus cannot scrape streaming-engine metrics for 2 minutes.
+
+      - alert: StreamingConsumerLagHigh
+        expr: max(fleetstream_streaming_consumer_lag) by (topic) > 5000
+        for: 10m
+        labels:
+          severity: warning
+          service: streaming-engine
+        annotations:
+          summary: High Kafka consumer lag
+          description: Consumer lag exceeds 5000 messages for 10 minutes.
+
+      - alert: StreamingDLQMessages
+        expr: increase(fleetstream_streaming_dlq_messages_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: streaming-engine
+        annotations:
+          summary: Messages sent to DLQ
+          description: Streaming engine has sent messages to the dead-letter queue.
+
+      - alert: StreamingRedisErrors
+        expr: rate(fleetstream_streaming_redis_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: streaming-engine
+        annotations:
+          summary: Redis errors in streaming engine
+          description: Streaming engine is encountering Redis operation failures.
+
+  - name: fleetstream-bff
+    rules:
+      - alert: BffApiDown
+        expr: up{job="bff-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: bff-api
+        annotations:
+          summary: BFF API is down
+          description: Prometheus cannot scrape bff-api metrics for 2 minutes.
+
+      - alert: BffKafkaConsumerErrors
+        expr: sum(rate(fleetstream_bff_kafka_messages_total{result="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: bff-api
+        annotations:
+          summary: BFF Kafka consumer errors
+          description: BFF is failing to consume Kafka messages.
+
+      - alert: BffRedisErrors
+        expr: sum(rate(fleetstream_bff_redis_operations_total{result="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: bff-api
+        annotations:
+          summary: BFF Redis errors
+          description: BFF is encountering Redis operation failures.

@@ -35,18 +35,59 @@ go build -o ingress-gateway ./cmd/server
 - **HTTP POST**: `POST http://localhost:8080/ingest`
 - **WebSocket**: `ws://localhost:8080/ws`
 - **gRPC**: `localhost:50051`
-- **Health**: `http://localhost:8080/health`
+- **Liveness**: `GET http://localhost:8080/health/live`
+- **Readiness**: `GET http://localhost:8080/health/ready` (Kafka reachable + pool accepting)
 - **Metrics**: `http://localhost:9090/metrics`
 
 ## Load Testing
 
 ```bash
-go run cmd/loadtest/main.go --trucks=10000 --rate=10
+# Throughput (10K simulated trucks)
+go run cmd/loadtest/main.go --mode=throughput --trucks=10000 --rate=10
+
+# Concurrent connections gate (10K WebSocket connections)
+go run cmd/loadtest/main.go --mode=connections --connections=10000 --duration=30s --gate
+
+# Or via Makefile (requires running ingress-gateway)
+make loadtest-gate
+```
+
+## Integration Tests
+
+```bash
+# Requires Kafka at KAFKA_BROKERS (default localhost:9092)
+make integration
 ```
 
 ## Configuration
 
-Key settings in `pkg/config/config.go`:
+Config loads in order: defaults → optional YAML (`CONFIG_FILE`) → environment variables (highest precedence).
+
+| Variable | Maps to | Default |
+|---|---|---|
+| `CONFIG_FILE` | YAML overlay path | unset |
+| `GRPC_PORT` | `Server.GRPCPort` | `50051` |
+| `HTTP_PORT` | HTTP/WebSocket listen port | `8080` |
+| `WEBSOCKET_PORT` | `Server.WebsocketPort` (overrides `HTTP_PORT`) | `8080` |
+| `READ_TIMEOUT` | `Server.ReadTimeout` | `5s` |
+| `WRITE_TIMEOUT` | `Server.WriteTimeout` | `10s` |
+| `IDLE_TIMEOUT` | `Server.IdleTimeout` | `60s` |
+| `KAFKA_BROKERS` | `Kafka.Brokers` (comma-separated) | `localhost:9092` |
+| `KAFKA_TOPIC` | `Kafka.Topic` | `fleet.telemetry.raw` |
+| `KAFKA_CLIENT_ID` | `Kafka.ClientID` | `ingress-gateway` |
+| `KAFKA_COMPRESSION` | `Kafka.Compression` | `snappy` |
+| `WORKER_POOL_SHARDS` | `WorkerPool.Shards` | `8` |
+| `WORKER_POOL_WORKERS_PER_SHARD` | `WorkerPool.WorkersPerShard` | `4` |
+| `WORKER_POOL_QUEUE_SIZE` | `WorkerPool.QueueSize` | `10000` |
+| `BACKPRESSURE_ENABLED` | `Backpressure.Enabled` | `true` |
+| `BACKPRESSURE_DROP_ON_FULL` | `Backpressure.DropOnFull` | `true` |
+| `BACKPRESSURE_MAX_QUEUE_DEPTH` | `Backpressure.MaxQueueDepth` | `100000` |
+| `METRICS_ENABLED` | `Metrics.Enabled` | `true` |
+| `METRICS_PORT` | `Metrics.Port` | `9090` |
+| `LOG_LEVEL` | `Logging.Level` | `info` |
+| `LOG_FORMAT` | `Logging.Format` (`json` or `text`) | `json` |
+| `LOG_OUTPUT` | `Logging.Output` (`stdout`, `stderr`, `file`) | `stdout` |
+| `SHUTDOWN_TIMEOUT` | `Shutdown.Timeout` | `30s` |
 
 ```yaml
 worker_pool:

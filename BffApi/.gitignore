@@ -3,7 +3,7 @@
 # Clean Architecture: Core, Application, Infrastructure, Presentation.
 # =============================================================================
 
-# --- .NET build & test artifacts ---------------------------------------------
+# --- .NET build & test artifacts ----------------------------------------------
 [Bb]in/
 [Oo]bj/
 [Dd]ebug/
@@ -16,9 +16,7 @@ x86/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
 bld/
-[Bb]uild[Ll]og.*
 [Ll]og/
-[Oo]bj/
 [Oo]ut/
 *.user
 *.userosscache
@@ -33,14 +31,11 @@ bld/
 [Bb]uild[Ll]og.*
 *.coverage
 *.coveragexml
+*.coverage.json
 coverage/
 coveragereport/
 TestResults/
 *.trx
-*.coverage
-*.coveragexml
-*.coverage.json
-*.coveragexml
 *.dll
 *.exe
 *.pdb
@@ -53,13 +48,13 @@ publish/
 *.pubxml.user
 *.publishproj
 
-# .NET 10 / ASP.NET Core specific
+# .NET / ASP.NET Core static assets (generated)
 **/wwwroot/dist/
 **/wwwroot/lib/
 **/wwwroot/*.min.js
 **/wwwroot/*.min.css
 
-# --- NuGet -------------------------------------------------------------------
+# --- NuGet --------------------------------------------------------------------
 packages/
 *.nupkg
 *.snupkg
@@ -68,7 +63,7 @@ project.fragment.lock.json
 artifacts/
 .nuget/
 
-# --- StyleCop / ReSharper / JetBrains ----------------------------------------
+# --- StyleCop / ReSharper / JetBrains -----------------------------------------
 _ReSharper*/
 *.[Rr]e[Ss]harper
 *.DotSettings.user
@@ -76,9 +71,7 @@ _ReSharper*/
 *.swp
 *.swo
 
-# --- Entity Framework migrations scaffolding (committed) ---------------------
-# Keep: src/Infrastructure/**/Migrations/*.cs
-# Ignore: local SQLite DB files and EF model snapshots from local dev
+# --- Entity Framework (local DB files only) -----------------------------------
 *.db
 *.db-shm
 *.db-wal
@@ -87,13 +80,10 @@ _ReSharper*/
 *.ndf
 *.bak
 
-# --- Secrets & local configuration (NEVER commit) ----------------------------
-# User-secrets live outside the repo by default; this catches the rare cases
-# where someone sets --project to a path inside the tree.
+# --- Secrets & local configuration (NEVER commit) -----------------------------
 secrets/
 appsettings.*.local.json
 appsettings.Local.json
-appsettings.*.Production.json
 *.pfx
 *.p12
 *.key
@@ -104,51 +94,39 @@ appsettings.*.Production.json
 .env.*
 !.env.example
 
-# --- Swagger / OpenAPI generated clients -------------------------------------
-# Ignore client SDKs that CI may generate into /src or /docs
+# --- Local dev run artifacts --------------------------------------------------
+.bff.err
+.bff.out
+
+# --- Swagger / OpenAPI generated clients --------------------------------------
 **/Generated/
 **/GeneratedClients/
-**/openapi/*.json
-!**/openapi/openapi.json
-!**/openapi/openapi.yaml
 
-# --- Docker ------------------------------------------------------------------
-# Local compose overrides and ephemeral container data
+# --- Docker (local overrides only) --------------------------------------------
 docker-compose.override.yml
-docker-compose.*.yml
-!docker-compose.yml
 .docker/
 docker/*.env
 docker/.volumes/
 docker/data/
 *.pid
-docker/*.pid
 
-# --- Protobuf / gRPC generated C# ---------------------------------------------
-# Generated stubs (if protoc is run locally instead of via the build target)
-**/obj/Debug/
-**/obj/Release/
+# --- Protobuf / gRPC generated C# (if protoc run locally) ---------------------
 **/Protos/Generated/
 **/*.pb.cs
-!**/*.pb.cc
-!**/*.pb.go
-!**/*.pb.go.timestamp
 
-# --- Logs & diagnostics ------------------------------------------------------
+# --- Logs & diagnostics -------------------------------------------------------
 *.log
 *.log.*
-[Dd]ebug*/
-[Rr]elease*/
 LogOutput/
 
-# --- IDEs --------------------------------------------------------------------
+# --- IDEs ---------------------------------------------------------------------
 .vs/
 .vscode/
 !.vscode/extensions.json
 !.vscode/launch.json.example
 .idea/
 
-# --- OS metadata -------------------------------------------------------------
+# --- OS metadata --------------------------------------------------------------
 Thumbs.db
 .DS_Store
 Desktop.ini

@@ -1,36 +1,26 @@
-// Package handlers implements the gRPC and WebSocket handlers for telemetry ingestion.
 package handlers
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"sync"
+	"io"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/fleetstream/ingress-gateway/internal/observability"
 	"github.com/fleetstream/ingress-gateway/internal/processors"
 	"github.com/fleetstream/ingress-gateway/pkg/models"
+	telemetry "github.com/fleetstream/ingress-gateway/proto/gen/v1"
 	"github.com/sirupsen/logrus"
 )
 
-// Upgrader for WebSocket connections
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
-
-// GRPCHandler handles gRPC telemetry ingestion
 type GRPCHandler struct {
+	telemetry.UnimplementedTelemetryIngestionServer
 	pool    *processors.ShardedPool
 	metrics *processors.Metrics
 	logger  *logrus.Logger
 }
 
-// NewGRPCHandler creates a new gRPC handler
+var _ telemetry.TelemetryIngestionServer = (*GRPCHandler)(nil)
+
 func NewGRPCHandler(pool *processors.ShardedPool, metrics *processors.Metrics, logger *logrus.Logger) *GRPCHandler {
 	return &GRPCHandler{
 		pool:    pool,
@@ -39,39 +29,96 @@ func NewGRPCHandler(pool *processors.ShardedPool, metrics *processors.Metrics, l
 	}
 }
 
-// Ingest handles unary telemetry ingestion via gRPC
-func (h *GRPCHandler) Ingest(ctx context.Context, payload models.TelemetryPayload) (*models.IngestResult, error) {
+func (h *GRPCHandler) Ingest(ctx context.Context, req *telemetry.IngestRequest) (*telemetry.IngestResponse, error) {
 	start := time.Now()
-	
-	// Validate payload
+	payload := protoToPayload(req.GetPayload())
+
 	if err := validatePayload(payload); err != nil {
-		h.logger.WithError(err).Warn("invalid payload received")
-		return &models.IngestResult{
-			Accepted: false,
-			Reason:   err.Error(),
+		observability.WithCtx(h.logger, ctx).WithError(err).Warn("invalid payload received")
+		return &telemetry.IngestResponse{
+			Accepted:    false,
+			MessageId:   payload.MessageID,
+			ProcessedAt: time.Now().UnixMilli(),
 		}, nil
 	}
 
-	// Submit to worker pool
 	err := h.pool.Submit(ctx, payload, "grpc")
-	result := &models.IngestResult{
-		MessageID:   payload.MessageID,
+	resp := &telemetry.IngestResponse{
+		MessageId:   payload.MessageID,
 		ProcessedAt: time.Now().UnixMilli(),
 	}
 
 	if err != nil {
-		result.Accepted = false
-		result.Rejected = true
-		result.Reason = err.Error()
+		resp.Accepted = false
 		if h.metrics != nil {
 			h.metrics.JobsDropped.WithLabelValues("grpc", err.Error()).Inc()
 		}
-	} else {
-		result.Accepted = true
-		if h.metrics != nil {
-			h.metrics.ProcessingDuration.WithLabelValues("grpc").Observe(time.Since(start).Seconds())
-		}
+		return resp, nil
 	}
 
-	return result, nil
+	resp.Accepted = true
+	observability.WithCtx(h.logger, ctx).WithField("message_id", payload.MessageID).Info("telemetry ingested")
+	if h.metrics != nil {
+		h.metrics.ProcessingDuration.WithLabelValues("grpc").Observe(time.Since(start).Seconds())
+	}
+	return resp, nil
+}
+
+func (h *GRPCHandler) BatchIngest(ctx context.Context, req *telemetry.BatchIngestRequest) (*telemetry.BatchIngestResponse, error) {
+	resp := &telemetry.BatchIngestResponse{}
+	for _, p := range req.GetPayloads() {
+		item, err := h.Ingest(ctx, &telemetry.IngestRequest{Payload: p})
+		if err != nil {
+			resp.Rejected++
+			continue
+		}
+		if item.Accepted {
+			resp.Accepted++
+			resp.MessageIds = append(resp.MessageIds, item.MessageId)
+		} else {
+			resp.Rejected++
+		}
+	}
+	return resp, nil
+}
+
+func (h *GRPCHandler) StreamIngest(stream telemetry.TelemetryIngestion_StreamIngestServer) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		resp, err := h.Ingest(stream.Context(), req)
+		if err != nil {
+			return err
+		}
+		if err := stream.Send(resp); err != nil {
+			return err
+		}
+	}
+}
+
+func protoToPayload(p *telemetry.TelemetryPayload) models.TelemetryPayload {
+	if p == nil {
+		return models.TelemetryPayload{}
+	}
+	ts := time.Time{}
+	if p.TimestampUnixMs > 0 {
+		ts = time.UnixMilli(p.TimestampUnixMs)
+	}
+	return models.TelemetryPayload{
+		TruckID:                  p.TruckId,
+		Timestamp:                ts,
+		Latitude:                 p.Latitude,
+		Longitude:                p.Longitude,
+		EngineTemperatureCelsius: p.EngineTemperatureCelsius,
+		SpeedKmh:                 p.SpeedKmh,
+		FuelLevelPercent:         p.FuelLevelPercent,
+		DiagnosticCodes:          p.DiagnosticCodes,
+		MessageID:                p.MessageId,
+		Source:                   "grpc",
+	}
 }

@@ -63,3 +63,14 @@ public interface IAlertService
     Task AcknowledgeAlertAsync(string id, string acknowledgedBy, CancellationToken cancellationToken = default);
     Task<int> GetActiveAlertCountAsync(CancellationToken cancellationToken = default);
 }
+
+public interface ITelemetryHistoryStore
+{
+    Task AppendAsync(TruckTelemetry sample, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TruckTelemetry>> GetHistoryAsync(
+        string truckId,
+        DateTime from,
+        DateTime to,
+        int limit,
+        CancellationToken cancellationToken = default);
+}

@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Core\FleetStream.Core.csproj" />
     <ProjectReference Include="..\Application\FleetStream.Application.csproj" />
   </ItemGroup>
@@ -20,6 +24,15 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.11" />
     <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
+  </ItemGroup>
+
+  <!--
+    graphify-dotnet-core: Code-base knowledge-graph generation.
+    Provides isolated per-project dependency graphs, exported as JSON / HTML / report.
+    Wrapped entirely by GraphGeneratorService so Application layer stays decoupled.
+  -->
+  <ItemGroup>
+    <PackageReference Include="graphify-dotnet-core" Version="0.7.0" />
   </ItemGroup>
 
 </Project>

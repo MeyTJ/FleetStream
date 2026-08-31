@@ -5,8 +5,10 @@ import (
 	"errors"
 	"hash/fnv"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/fleetstream/ingress-gateway/internal/observability"
 	"github.com/fleetstream/ingress-gateway/pkg/models"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -20,48 +22,59 @@ var ErrShuttingDown = errors.New("worker pool is shutting down")
 
 // Job represents a unit of work to be processed by a worker
 type Job struct {
-	Payload  models.TelemetryPayload
-	Source   string
-	Enqueued time.Time
+	Payload       models.TelemetryPayload
+	Source        string
+	Enqueued      time.Time
+	CorrelationID string
+	Traceparent   string
 }
 
 // Shard is a single shard within the worker pool
 type Shard struct {
-	id       int
-	jobs     chan Job
-	workers  []*Worker
-	wg       sync.WaitGroup
-	closed   atomic.Bool
+	id      int
+	jobs    chan Job
+	workers []*Worker
+	wg      sync.WaitGroup
+	closed  atomic.Bool
 }
 
 // Worker processes jobs from its shard's channel
 type Worker struct {
 	id      int
 	shard   *Shard
+	pool    *ShardedPool
 	jobChan chan Job
+}
+
+// JobProcessor normalizes a telemetry payload and publishes it.
+type JobProcessor interface {
+	Process(ctx context.Context, payload models.TelemetryPayload, source string) (*models.NormalizedTelemetry, error)
 }
 
 // ShardedPool is a sharded worker pool for high-throughput processing.
 // The pool distributes work across multiple shards to reduce contention.
 type ShardedPool struct {
-	shards     []*Shard
-	numShards  int
-	queueSize  int
-	logger     *logrus.Logger
-	closed     atomic.Bool
-	
-	// Stats
-	enqueued   atomic.Uint64
-	processed  atomic.Uint64
-	dropped    atomic.Uint64
+	shards    []*Shard
+	numShards int
+	queueSize int
+	logger    *logrus.Logger
+	metrics   *Metrics
+	processor JobProcessor
+	closed    atomic.Bool
+
+	enqueued  atomic.Uint64
+	processed atomic.Uint64
+	dropped   atomic.Uint64
 }
 
 // PoolConfig configures the sharded worker pool
 type PoolConfig struct {
-	NumShards    int
+	NumShards       int
 	WorkersPerShard int
-	QueueSize    int
-	Logger       *logrus.Logger
+	QueueSize       int
+	Logger          *logrus.Logger
+	Metrics         *Metrics
+	Processor       JobProcessor
 }
 
 // NewShardedPool creates a new sharded worker pool
@@ -83,19 +96,22 @@ func NewShardedPool(cfg PoolConfig) (*ShardedPool, error) {
 		numShards: cfg.NumShards,
 		queueSize: cfg.QueueSize,
 		logger:    cfg.Logger,
+		metrics:   cfg.Metrics,
+		processor: cfg.Processor,
 	}
 
 	pool.shards = make([]*Shard, cfg.NumShards)
 	for i := 0; i < cfg.NumShards; i++ {
 		shard := &Shard{
-			id:        i,
-			jobs:      make(chan Job, cfg.QueueSize),
+			id:   i,
+			jobs: make(chan Job, cfg.QueueSize),
 		}
 		shard.workers = make([]*Worker, cfg.WorkersPerShard)
 		for j := 0; j < cfg.WorkersPerShard; j++ {
 			shard.workers[j] = &Worker{
 				id:      j,
 				shard:   shard,
+				pool:    pool,
 				jobChan: shard.jobs,
 			}
 		}
@@ -131,11 +147,13 @@ func (p *ShardedPool) Submit(ctx context.Context, payload models.TelemetryPayloa
 
 	// Select shard based on truck_id for consistent ordering
 	shard := p.selectShard(payload.TruckID)
-	
+
 	job := Job{
-		Payload:  payload,
-		Source:   source,
-		Enqueued: time.Now(),
+		Payload:       payload,
+		Source:        source,
+		Enqueued:      time.Now(),
+		CorrelationID: observability.CorrelationID(ctx),
+		Traceparent:   observability.Traceparent(ctx),
 	}
 
 	// Non-blocking enqueue with backpressure
@@ -209,45 +227,48 @@ func (p *ShardedPool) Stats() PoolStats {
 	}
 
 	return PoolStats{
-		Enqueued:  p.enqueued.Load(),
-		Processed: p.processed.Load(),
-		Dropped:   p.dropped.Load(),
-		QueueDepth: queueDepth,
+		Enqueued:      p.enqueued.Load(),
+		Processed:     p.processed.Load(),
+		Dropped:       p.dropped.Load(),
+		QueueDepth:    queueDepth,
 		QueueCapacity: p.numShards * p.queueSize,
-		Shards:    p.numShards,
+		Shards:        p.numShards,
 	}
 }
 
 // PoolStats represents worker pool statistics
 type PoolStats struct {
-	Enqueued  uint64
-	Processed uint64
-	Dropped   uint64
-	QueueDepth int
+	Enqueued      uint64
+	Processed     uint64
+	Dropped       uint64
+	QueueDepth    int
 	QueueCapacity int
-	Shards    int
+	Shards        int
 }
 
-// run is the worker's main loop
+func (p *ShardedPool) Accepting() bool {
+	return !p.closed.Load()
+}
+
 func (w *Worker) run(ctx context.Context) {
 	defer w.shard.wg.Done()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case job, ok := <-w.jobChan:
-			if !ok {
-				return
-			}
-			w.processJob(ctx, job)
-		}
+	for job := range w.jobChan {
+		jobCtx := observability.WithIDs(context.WithoutCancel(ctx), job.CorrelationID, job.Traceparent)
+		w.processJob(jobCtx, job)
 	}
 }
 
-// processJob processes a single job
 func (w *Worker) processJob(ctx context.Context, job Job) {
-	// This would be where processing happens in the real implementation
-	// For now, we just increment the processed counter
-	w.shard.workers[0].shard.processed.Add(1)
+	if w.pool.processor != nil {
+		if _, err := w.pool.processor.Process(ctx, job.Payload, job.Source); err != nil {
+			observability.WithCtx(w.pool.logger, ctx).WithError(err).
+				WithField("message_id", job.Payload.MessageID).
+				Error("failed to process job")
+			if w.pool.metrics != nil {
+				w.pool.metrics.KafkaPublishErrors.Inc()
+			}
+			return
+		}
+	}
+	w.pool.processed.Add(1)
 }

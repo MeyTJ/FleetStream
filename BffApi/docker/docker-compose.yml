@@ -42,6 +42,7 @@ services:
       - fleetstream-net
 
   bff-api:
+    profiles: ["production"]
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -55,6 +56,33 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Redis: "redis:6379,abortConnect=false"
       ConnectionStrings__Kafka: "kafka:9092"
+      Kafka__Brokers: "kafka:9092"
+      Jwt__Issuer: ${JWT_ISSUER:-https://auth.fleetstream.example.com}
+      Jwt__Audience: ${JWT_AUDIENCE:-fleetstream-bff}
+      Jwt__JwksUri: ${JWT_JWKS_URI:-https://auth.fleetstream.example.com/.well-known/jwks.json}
+    networks:
+      - fleetstream-net
+    restart: unless-stopped
+
+  bff-api-dev:
+    profiles: ["dev"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: fleetstream-bff-api-dev
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+      - kafka
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Redis: "redis:6379,abortConnect=false"
+      ConnectionStrings__Kafka: "kafka:9092"
+      Kafka__Brokers: "kafka:9092"
+      Jwt__Issuer: ${JWT_ISSUER:-https://auth.fleetstream.example.com}
+      Jwt__Audience: ${JWT_AUDIENCE:-fleetstream-bff}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:-this-is-a-dev-signing-key-at-least-32-chars!!}
     networks:
       - fleetstream-net
     restart: unless-stopped

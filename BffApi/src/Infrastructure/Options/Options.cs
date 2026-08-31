@@ -53,6 +53,18 @@ public sealed class KafkaOptions
 
     [Range(100, 60_000)]
     public int CommitIntervalMs { get; set; } = 5_000;
+
+    public bool TlsEnabled { get; set; }
+
+    public string CaCertPath { get; set; } = string.Empty;
+
+    public bool TlsSkipVerify { get; set; }
+
+    public string SaslMechanism { get; set; } = string.Empty;
+
+    public string SaslUsername { get; set; } = string.Empty;
+
+    public string SaslPassword { get; set; } = string.Empty;
 }
 
 /// <summary>Strongly-typed configuration for JWT bearer auth.</summary>
@@ -116,4 +128,16 @@ public sealed class OpenTelemetryOptions
     public string OtlpEndpoint { get; set; } = string.Empty;
 
     public bool PrometheusEnabled { get; set; } = true;
+}
+
+/// <summary>Feature flags per 06-configuration.md §6.5.</summary>
+public sealed class FeaturesOptions
+{
+    public const string SectionName = "Features";
+
+    public bool DevToken { get; set; } = true;
+
+    public bool RemoteConfig { get; set; } = false;
+
+    public bool VerboseTracing { get; set; } = false;
 }

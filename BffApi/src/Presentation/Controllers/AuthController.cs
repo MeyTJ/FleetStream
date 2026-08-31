@@ -1,16 +1,13 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using Asp.Versioning;
+using FleetStream.Infrastructure.Options;
 using FleetStream.Presentation.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.FeatureManagement;
 
 namespace FleetStream.Presentation.Controllers;
 
-/// <summary>
-/// Development-only endpoints. The class is registered only when
-/// <see cref="IHostEnvironment.IsDevelopment"/> is true; in any other
-/// environment the route returns 404 because no controller action is mapped.
-/// </summary>
 [ApiController]
 [AllowAnonymous]
 [ApiVersion("1.0")]
@@ -18,21 +15,21 @@ namespace FleetStream.Presentation.Controllers;
 public sealed class AuthController : ControllerBase
 {
     private readonly DevTokenIssuer _issuer;
-    private readonly IHostEnvironment _env;
+    private readonly IFeatureManager _features;
 
-    public AuthController(DevTokenIssuer issuer, IHostEnvironment env)
+    public AuthController(DevTokenIssuer issuer, IFeatureManager features)
     {
-        _issuer = issuer;
-        _env = env;
+        _issuer    = issuer;
+        _features  = features;
     }
 
     [HttpPost("dev-token", Name = "IssueDevToken")]
     [ProducesResponseType(typeof(DevTokenResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult<DevTokenResponse> IssueDevToken([FromBody] DevTokenRequest req)
+    public async Task<ActionResult<DevTokenResponse>> IssueDevToken([FromBody] DevTokenRequest req)
     {
-        if (!_env.IsDevelopment())
+        if (!await _features.IsEnabledAsync(nameof(FeaturesOptions.DevToken)))
             return NotFound();
 
         if (!ModelState.IsValid)
@@ -43,13 +40,21 @@ public sealed class AuthController : ControllerBase
     }
 }
 
-public sealed class DevTokenRequest
+public sealed record DevTokenRequest : IValidatableObject
 {
-    [Required(AllowEmptyStrings = false, ErrorMessage = "Subject is required.")]
-    [StringLength(64, MinimumLength = 1, ErrorMessage = "Subject must be 1-64 chars.")]
-    public string Subject { get; set; } = "dev";
+    [Required(AllowEmptyStrings = false, ErrorMessage = "subject is required.")]
+    [StringLength(64, MinimumLength = 1, ErrorMessage = "subject must be 1-64 chars.")]
+    public required string Subject { get; init; }
 
-    public string[]? Roles { get; set; }
+    public string[]? Roles { get; init; }
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (Subject is not null && string.IsNullOrWhiteSpace(Subject))
+            yield return new ValidationResult(
+                "subject must not be whitespace.",
+                new[] { nameof(Subject) });
+    }
 }
 
 public sealed record DevTokenResponse(string AccessToken, DateTime ExpiresAt);

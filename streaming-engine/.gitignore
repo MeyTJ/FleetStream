@@ -1,14 +1,16 @@
 # =============================================================================
-# FleetStream.streaming-engine – Go 1.21 / Kafka / Redis / Prometheus
+# FleetStream.streaming-engine – Go / Kafka / Redis / Prometheus
 # Stream processing service.
 # =============================================================================
 
-# --- Go build artifacts ------------------------------------------------------
-# Compiled binaries (one per cmd/ subpackage)
+# --- Go build artifacts -------------------------------------------------------
+# Binaries built from cmd/ and module-root name
+/streaming-engine
+/streaming-engine.exe
+cmd/*/*.exe
 cmd/*/server
 cmd/*/worker
 cmd/*/processor
-cmd/*/*.exe
 *.exe
 *.exe~
 *.dll
@@ -16,37 +18,26 @@ cmd/*/*.exe
 *.so.*
 *.dylib
 *.test
-*.out
 *.prof
 *.cover
 *.coverprofile
 coverage.txt
 coverage.html
-
-# Test binary & cache
-*.test
-*.out
-*.prof
 gocoverage/
 coverage/
 htmlcov/
 
-# --- Go workspace & module cache --------------------------------------------
-# (go.sum is committed; vendor/ is optional – ignored to keep repo lean)
+# --- Go workspace & vendor ----------------------------------------------------
 vendor/
 go.work
 go.work.sum
 
-# --- Protobuf / gRPC ---------------------------------------------------------
-# If/when this service gains gRPC contracts, ignore only the generated files,
-# keeping the build tag driver in proto/gen/v1/build.go committed.
-**/*.pb.go
+# --- Protobuf / gRPC ----------------------------------------------------------
+# If/when gRPC contracts are added: commit *.pb.go; ignore gateway/swagger stubs.
 **/*.pb.gw.go
 **/*.swagger.json
-!**/build.go
-!**/doc.go
 
-# --- Secrets & local configuration (NEVER commit) ---------------------------
+# --- Secrets & local configuration (NEVER commit) -----------------------------
 .env
 .env.*
 !.env.example
@@ -64,7 +55,7 @@ secrets/
 !*.crt
 !*.cert
 
-# --- Runtime data & ephemeral state -----------------------------------------
+# --- Runtime data & ephemeral state -------------------------------------------
 *.pid
 *.sock
 *.log
@@ -79,20 +70,17 @@ data/
 *.sqlite
 *.sqlite3
 
-# --- Docker -----------------------------------------------------------------
+# --- Docker (local overrides only) --------------------------------------------
 Dockerfile.local
 docker-compose.override.yml
-docker-compose.*.yml
-!docker-compose.yml
 .docker/
 .docker-volumes/
-*.pid
 
-# --- Prometheus / observability local snapshots ----------------------------
+# --- Prometheus / observability local snapshots -------------------------------
 metrics-snapshot.*
 prometheus-data/
 
-# --- IDEs & editors ---------------------------------------------------------
+# --- IDEs & editors -----------------------------------------------------------
 .vscode/
 !.vscode/extensions.json
 !.vscode/launch.json.example
@@ -102,7 +90,7 @@ prometheus-data/
 *.swp
 *.swo
 
-# --- OS metadata ------------------------------------------------------------
+# --- OS metadata --------------------------------------------------------------
 Thumbs.db
 .DS_Store
 Desktop.ini

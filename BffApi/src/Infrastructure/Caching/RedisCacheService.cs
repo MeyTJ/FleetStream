@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using FleetStream.Application.Abstractions;
+using FleetStream.Infrastructure.Metrics;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 
@@ -36,15 +37,17 @@ public class RedisCacheService : ICacheService
             var value = await _database.StringGetAsync(key);
             if (value.IsNullOrEmpty)
             {
+                BffMetrics.CacheMissesTotal.Add(1, new KeyValuePair<string, object?>("key_pattern", KeyPattern(key)));
                 _logger.LogDebug("Cache miss for key: {Key}", key);
                 return null;
             }
 
-            _logger.LogDebug("Cache hit for key: {Key}", key);
+            BffMetrics.CacheHitsTotal.Add(1, new KeyValuePair<string, object?>("key_pattern", KeyPattern(key)));
             return JsonSerializer.Deserialize<T>((string)value!, _jsonOptions);
         }
         catch (Exception ex)
         {
+            BffMetrics.CacheMissesTotal.Add(1, new KeyValuePair<string, object?>("key_pattern", KeyPattern(key)));
             _logger.LogError(ex, "Error getting cache key: {Key}", key);
             return null;
         }
@@ -56,10 +59,11 @@ public class RedisCacheService : ICacheService
         {
             var serialized = JsonSerializer.Serialize(value, _jsonOptions);
             await _database.StringSetAsync(key, serialized, expiration ?? TimeSpan.FromMinutes(5));
-            _logger.LogDebug("Cache set for key: {Key}, expiration: {Expiration}", key, expiration);
+            RecordRedisOp("set", "success");
         }
         catch (Exception ex)
         {
+            RecordRedisOp("set", "error");
             _logger.LogError(ex, "Error setting cache key: {Key}", key);
         }
     }
@@ -123,5 +127,16 @@ public class RedisCacheService : ICacheService
             _logger.LogError(ex, "Error getting cache keys with pattern: {Pattern}", pattern);
             return Array.Empty<string>();
         }
+    }
+
+    private static void RecordRedisOp(string op, string result) =>
+        BffMetrics.RedisOperationsTotal.Add(1,
+            new KeyValuePair<string, object?>("op", op),
+            new KeyValuePair<string, object?>("result", result));
+
+    private static string KeyPattern(string key)
+    {
+        var idx = key.IndexOf(':');
+        return idx > 0 ? key[..idx] : key;
     }
 }

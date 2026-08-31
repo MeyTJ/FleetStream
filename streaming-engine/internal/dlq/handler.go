@@ -10,7 +10,9 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/fleetstream/streaming-engine/internal/metrics"
+	"github.com/fleetstream/streaming-engine/internal/observability"
 	"github.com/fleetstream/streaming-engine/pkg/config"
+	"github.com/fleetstream/streaming-engine/pkg/kafkasecurity"
 	"github.com/sirupsen/logrus"
 )
 
@@ -19,10 +21,10 @@ type MessageMetadata struct {
 	OriginalTopic     string            `json:"original_topic"`
 	OriginalPartition int32             `json:"original_partition"`
 	OriginalOffset    int64             `json:"original_offset"`
-	Timestamp        time.Time         `json:"timestamp"`
-	Error            string            `json:"error"`
-	RetryCount       int               `json:"retry_count"`
-	Headers          map[string]string `json:"headers,omitempty"`
+	Timestamp         time.Time         `json:"timestamp"`
+	Error             string            `json:"error"`
+	RetryCount        int               `json:"retry_count"`
+	Headers           map[string]string `json:"headers,omitempty"`
 }
 
 // DLQHandler handles messages that fail processing
@@ -32,8 +34,7 @@ type DLQHandler struct {
 	cfg      *config.DLQConfig
 	logger   *logrus.Logger
 	metrics  *metrics.Metrics
-	
-	// Retry tracking
+
 	retryMu    sync.Mutex
 	retryCount map[string]int
 	retryTimes map[string]time.Time
@@ -46,34 +47,37 @@ func NewDLQHandler(cfg *config.DLQConfig, logger *logrus.Logger, m *metrics.Metr
 	saramaConfig.Producer.Return.Successes = false
 	saramaConfig.Producer.Return.Errors = true
 	saramaConfig.Producer.Compression = sarama.CompressionSnappy
+	if err := kafkasecurity.Apply(saramaConfig, kafkasecurity.FromEnv()); err != nil {
+		return nil, err
+	}
+
+	h := &DLQHandler{
+		topic:      cfg.Topic,
+		cfg:        cfg,
+		logger:     logger,
+		metrics:    m,
+		retryCount: make(map[string]int),
+		retryTimes: make(map[string]time.Time),
+	}
+
+	if !cfg.Enabled {
+		return h, nil
+	}
 
 	producer, err := sarama.NewAsyncProducer(cfg.Brokers, saramaConfig)
 	if err != nil {
 		return nil, err
 	}
+	h.producer = producer
 
-	h := &DLQHandler{
-		producer:  producer,
-		topic:    cfg.Topic,
-		cfg:      cfg,
-		logger:   logger,
-		metrics:  m,
-		retryCount: make(map[string]int),
-		retryTimes: make(map[string]time.Time),
-	}
-
-	// Start error handler
 	go h.handleErrors()
-
-	// Start retry processor
-	go h.processRetries()
 
 	return h, nil
 }
 
 // SendToDLQ sends a failed message to the dead letter queue
 func (h *DLQHandler) SendToDLQ(ctx context.Context, msg *sarama.ConsumerMessage, err error) error {
-	if !h.cfg.Enabled {
+	if !h.cfg.Enabled || h.producer == nil {
 		h.logger.WithError(err).Warn("DLQ disabled, message dropped")
 		return nil
 	}
@@ -82,34 +86,34 @@ func (h *DLQHandler) SendToDLQ(ctx context.Context, msg *sarama.ConsumerMessage,
 		OriginalTopic:     msg.Topic,
 		OriginalPartition: msg.Partition,
 		OriginalOffset:    msg.Offset,
-		Timestamp:        time.Now(),
-		Error:           err.Error(),
-		RetryCount:       h.getRetryCount(msg.Key),
-		Headers:          make(map[string]string),
+		Timestamp:         time.Now(),
+		Error:             err.Error(),
+		RetryCount:        h.getRetryCount(msg.Key),
+		Headers:           make(map[string]string),
 	}
 
-	// Add original headers
 	for _, header := range msg.Headers {
 		metadata.Headers[string(header.Key)] = string(header.Value)
 	}
 
-	// Serialize metadata
 	metadataBytes, _ := json.Marshal(metadata)
 
-	// Create DLQ message
 	dlqMsg := &sarama.ProducerMessage{
 		Topic: h.topic,
-		Key:   msg.Key,
+		Key:   sarama.ByteEncoder(msg.Key),
 		Value: sarama.ByteEncoder(msg.Value),
-		Headers: []sarama.RecordHeader{
+		Headers: append(observability.KafkaHeaders(ctx), []sarama.RecordHeader{
 			{Key: []byte("error"), Value: []byte(err.Error())},
 			{Key: []byte("original_topic"), Value: []byte(msg.Topic)},
 			{Key: []byte("original_offset"), Value: []byte(string(rune(msg.Offset)))},
 			{Key: []byte("metadata"), Value: metadataBytes},
-		},
+		}...),
 	}
 
 	select {
+	case <-ctx.Done():
+		h.metrics.DLQErrors.Inc()
+		return ctx.Err()
 	case h.producer.Input() <- dlqMsg:
 		h.metrics.DLQMessages.WithLabelValues("sent").Inc()
 		h.logger.WithField("topic", msg.Topic).
@@ -124,10 +128,46 @@ func (h *DLQHandler) SendToDLQ(ctx context.Context, msg *sarama.ConsumerMessage,
 	}
 }
 
-// ShouldRetry determines if a message should be retried
-func (h *DLQHandler) ShouldRetry(key []byte) bool {
-	count := h.getRetryCount(key)
+// RecordFailure increments the retry counter and reports whether another attempt is allowed.
+func (h *DLQHandler) RecordFailure(key []byte) bool {
+	if !h.cfg.Enabled || h.cfg.RetryAttempts <= 0 || h.cfg.RetryBackoff <= 0 {
+		return false
+	}
+
+	h.retryMu.Lock()
+	defer h.retryMu.Unlock()
+
+	keyStr := string(key)
+	count := h.retryCount[keyStr] + 1
+	h.retryCount[keyStr] = count
+	h.retryTimes[keyStr] = time.Now()
 	return count < h.cfg.RetryAttempts
+}
+
+// BackoffRemaining returns how long to wait before the next retry attempt.
+func (h *DLQHandler) BackoffRemaining(key []byte) time.Duration {
+	h.retryMu.Lock()
+	defer h.retryMu.Unlock()
+
+	keyStr := string(key)
+	last, ok := h.retryTimes[keyStr]
+	if !ok {
+		return 0
+	}
+	elapsed := time.Since(last)
+	if elapsed >= h.cfg.RetryBackoff {
+		return 0
+	}
+	return h.cfg.RetryBackoff - elapsed
+}
+
+// ResetRetries clears retry state after successful processing.
+func (h *DLQHandler) ResetRetries(key []byte) {
+	h.retryMu.Lock()
+	defer h.retryMu.Unlock()
+	keyStr := string(key)
+	delete(h.retryCount, keyStr)
+	delete(h.retryTimes, keyStr)
 }
 
 // getRetryCount gets the retry count for a message
@@ -145,34 +185,12 @@ func (h *DLQHandler) handleErrors() {
 	}
 }
 
-// processRetries periodically checks for messages to retry
-func (h *DLQHandler) processRetries() {
-	ticker := time.NewTicker(h.cfg.RetryBackoff)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			h.retryMu.Lock()
-			now := time.Now()
-			for key, lastTime := range h.retryTimes {
-				if now.Sub(lastTime) >= h.cfg.RetryBackoff {
-					count := h.retryCount[key]
-					if count < h.cfg.RetryAttempts {
-						h.retryCount[key] = count + 1
-						h.logger.WithField("key", key).Info("message would be retried")
-					}
-					delete(h.retryTimes, key)
-				}
-			}
-			h.retryMu.Unlock()
-		}
-	}
-}
-
 // Close closes the DLQ handler
 func (h *DLQHandler) Close() error {
 	if !h.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	if h.producer == nil {
 		return nil
 	}
 	return h.producer.Close()

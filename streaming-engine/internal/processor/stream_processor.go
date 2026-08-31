@@ -83,21 +83,23 @@ func (p *StreamProcessor) enrich(result *models.ProcessedTelemetry) {
 // detectAnomalies identifies anomalies in the telemetry data
 func (p *StreamProcessor) detectAnomalies(result *models.ProcessedTelemetry, prevState *models.TruckState) {
 	t := p.cfg.AnomalyThreshold
-	if result.SpeedKmh > t.SpeedViolationThresholdKmh {
+	r := p.cfg.RiskScoring
+
+	if result.SpeedKmh > t.SpeedViolationThresholdKmh || result.SpeedKmh > t.MaxSpeedKmh {
 		result.SpeedViolation = true
-		result.RiskScore += 0.3
+		result.RiskScore += r.SpeedWeight
 		p.metrics.SpeedViolations.Inc()
 		p.metrics.AnomaliesDetected.WithLabelValues("speed_violation").Inc()
 	}
 	if result.EngineTemperatureCelsius > t.MaxEngineTempCelsius || result.EngineTemperatureCelsius < t.MinEngineTempCelsius {
 		result.TempAnomaly = true
-		result.RiskScore += 0.4
+		result.RiskScore += r.TempWeight
 		p.metrics.TempAnomalies.Inc()
 		p.metrics.AnomaliesDetected.WithLabelValues("temp_anomaly").Inc()
 	}
 	if result.FuelLevelPercent < t.MinFuelLevelPercent {
 		result.FuelLow = true
-		result.RiskScore += 0.2
+		result.RiskScore += r.FuelWeight
 		p.metrics.FuelLowEvents.Inc()
 		p.metrics.AnomaliesDetected.WithLabelValues("fuel_low").Inc()
 	}

@@ -1,0 +1,111 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(fleetstream_ingress_jobs_processed_total[5m])) by (source)",
+          "legendFormat": "{{source}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Jobs processed/sec by source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(fleetstream_ingress_job_processing_duration_seconds_bucket[5m])) by (le, source))",
+          "legendFormat": "p99 {{source}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Job processing latency p99",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "rate(fleetstream_ingress_kafka_messages_published_total[5m])",
+          "legendFormat": "published",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(fleetstream_ingress_kafka_publish_errors_total[5m])",
+          "legendFormat": "errors",
+          "refId": "B"
+        }
+      ],
+      "title": "Kafka publish rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "fleetstream_ingress_backpressure_state",
+          "legendFormat": "state",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(fleetstream_ingress_backpressure_drops_total[5m])",
+          "legendFormat": "drops/sec",
+          "refId": "B"
+        }
+      ],
+      "title": "Backpressure",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "fleetstream_ingress_active_http_connections",
+          "legendFormat": "HTTP",
+          "refId": "A"
+        },
+        {
+          "expr": "fleetstream_ingress_active_grpc_connections",
+          "legendFormat": "gRPC",
+          "refId": "B"
+        },
+        {
+          "expr": "fleetstream_ingress_active_websocket_connections",
+          "legendFormat": "WebSocket",
+          "refId": "C"
+        }
+      ],
+      "title": "Active connections",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["fleetstream", "ingress-gateway"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "utc",
+  "title": "FleetStream Ingress Gateway Overview",
+  "uid": "fleetstream-ingress-overview",
+  "version": 1
+}

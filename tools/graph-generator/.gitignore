@@ -1,0 +1,42 @@
+# =============================================================================
+# FleetStream graph-generator – Go CLI tool
+# Generates dependency graphs for monorepo projects.
+# =============================================================================
+
+# --- Go build artifacts -------------------------------------------------------
+/graph-generator
+/graph-generator.exe
+*.exe
+*.exe~
+*.test
+*.prof
+*.cover
+*.coverprofile
+coverage.txt
+coverage.html
+gocoverage/
+coverage/
+
+# --- Generated graph outputs --------------------------------------------------
+outputs/
+
+# --- Go workspace & vendor ----------------------------------------------------
+vendor/
+go.work
+go.work.sum
+
+# --- Secrets & local configuration --------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- IDEs ---------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS metadata --------------------------------------------------------------
+Thumbs.db
+.DS_Store
+Desktop.ini

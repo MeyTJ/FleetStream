@@ -6,11 +6,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/fleetstream/ingress-gateway/internal/observability"
 	"github.com/fleetstream/ingress-gateway/internal/processors"
 	"github.com/fleetstream/ingress-gateway/pkg/models"
+	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 )
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
 
 // WebSocketHandler handles WebSocket telemetry ingestion
 type WebSocketHandler struct {
@@ -32,7 +41,7 @@ func NewWebSocketHandler(pool *processors.ShardedPool, metrics *processors.Metri
 func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		h.logger.WithError(err).Error("websocket upgrade failed")
+		observability.WithCtx(h.logger, r.Context()).WithError(err).Error("websocket upgrade failed")
 		return
 	}
 	defer conn.Close()
@@ -58,7 +67,7 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					h.logger.WithError(err).Warn("websocket read error")
+					observability.WithCtx(h.logger, r.Context()).WithError(err).Warn("websocket read error")
 				}
 				break
 			}
@@ -66,12 +75,14 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 			// Parse and submit telemetry
 			var payload models.TelemetryPayload
 			if err := json.Unmarshal(message, &payload); err != nil {
-				h.logger.WithError(err).Warn("failed to parse telemetry payload")
+				observability.WithCtx(h.logger, r.Context()).WithError(err).Warn("failed to parse telemetry payload")
 				continue
 			}
 
 			if err := h.pool.Submit(r.Context(), payload, "websocket"); err != nil {
 				h.metrics.JobsDropped.WithLabelValues("websocket", err.Error()).Inc()
+			} else {
+				observability.WithCtx(h.logger, r.Context()).WithField("message_id", payload.MessageID).Info("telemetry ingested")
 			}
 		}
 	}()
@@ -121,11 +132,17 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var payload models.TelemetryPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		h.logger.WithError(err).Warn("failed to parse HTTP payload")
+		observability.WithCtx(h.logger, r.Context()).WithError(err).Warn("failed to parse HTTP payload")
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
+
+	if err := validatePayload(payload); err != nil {
+		observability.WithCtx(h.logger, r.Context()).WithError(err).Warn("invalid HTTP payload")
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if err := h.pool.Submit(r.Context(), payload, "http"); err != nil {
 		h.metrics.JobsDropped.WithLabelValues("http", err.Error()).Inc()
@@ -138,10 +155,11 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"accepted":    true,
-		"message_id":  payload.MessageID,
+		"accepted":     true,
+		"message_id":   payload.MessageID,
 		"processed_at": time.Now().UnixMilli(),
 	})
+	observability.WithCtx(h.logger, r.Context()).WithField("message_id", payload.MessageID).Info("telemetry ingested")
 
 	h.metrics.ProcessingDuration.WithLabelValues("http").Observe(time.Since(start).Seconds())
 }

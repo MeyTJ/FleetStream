@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using FleetStream.Application.Abstractions;
 using FleetStream.Core.Domain.Entities;
+using FleetStream.Infrastructure.Metrics;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 
@@ -43,10 +44,12 @@ public class RedisTruckStateStore : ITruckStateStore
             if (value.IsNullOrEmpty)
                 return null;
 
+            RecordRedisOp("get", "success");
             return JsonSerializer.Deserialize<TruckState>((string)value!, _jsonOptions);
         }
         catch (Exception ex)
         {
+            RecordRedisOp("get", "error");
             _logger.LogError(ex, "Error getting truck state for {TruckId}", truckId);
             return null;
         }
@@ -76,10 +79,12 @@ public class RedisTruckStateStore : ITruckStateStore
                 await _database.SetRemoveAsync(MovingSetKey, state.TruckId);
             }
 
+            RecordRedisOp("set", "success");
             _logger.LogDebug("Updated state for truck {TruckId}", state.TruckId);
         }
         catch (Exception ex)
         {
+            RecordRedisOp("set", "error");
             _logger.LogError(ex, "Error setting truck state for {TruckId}", state.TruckId);
             throw;
         }
@@ -155,4 +160,9 @@ public class RedisTruckStateStore : ITruckStateStore
             return 0;
         }
     }
+
+    private static void RecordRedisOp(string op, string result) =>
+        BffMetrics.RedisOperationsTotal.Add(1,
+            new KeyValuePair<string, object?>("op", op),
+            new KeyValuePair<string, object?>("result", result));
 }

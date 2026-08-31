@@ -1,0 +1,41 @@
+name: verify-production-readiness
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - "ingress-gateway/**"
+      - "streaming-engine/**"
+      - "BffApi/**"
+      - "docker-compose*.yml"
+      - "scripts/verify-production-readiness.sh"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+          cache-dependency-path: |
+            ingress-gateway/go.sum
+            streaming-engine/go.sum
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Verify builds and unit tests
+        run: bash scripts/verify-production-readiness.sh --ci
+
+  runtime:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images and run stack verification
+        run: bash scripts/verify-production-readiness.sh --ci --runtime

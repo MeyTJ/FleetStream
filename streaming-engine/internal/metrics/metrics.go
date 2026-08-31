@@ -8,27 +8,28 @@ import (
 
 // Metrics holds all Prometheus metrics for the streaming engine
 type Metrics struct {
-	MessagesConsumed    *prometheus.CounterVec
-	ConsumerErrors      *prometheus.CounterVec
-	ConsumerLag         *prometheus.GaugeVec
-	ProcessingDuration  *prometheus.HistogramVec
-	MessagesProcessed   *prometheus.CounterVec
-	MessagesDropped     *prometheus.CounterVec
-	DuplicatesDropped   *prometheus.CounterVec
-	AnomaliesDetected   *prometheus.CounterVec
-	MessagesPublished   *prometheus.CounterVec
-	PublishErrors       *prometheus.CounterVec
-	PublishLatency      *prometheus.HistogramVec
-	RedisOperations     *prometheus.CounterVec
-	RedisErrors         *prometheus.CounterVec
-	DLQMessages         *prometheus.CounterVec
-	SpeedViolations     prometheus.Counter
-	TempAnomalies       prometheus.Counter
-	FuelLowEvents       prometheus.Counter
-	GeofenceViolations  prometheus.Counter
-	ActiveWorkers       prometheus.Gauge
-	BackpressureEvents  prometheus.Counter
-	ConsumerRebalances  prometheus.Counter
+	MessagesConsumed   *prometheus.CounterVec
+	ConsumerErrors     *prometheus.CounterVec
+	ConsumerLag        *prometheus.GaugeVec
+	ProcessingDuration *prometheus.HistogramVec
+	MessagesProcessed  *prometheus.CounterVec
+	MessagesDropped    *prometheus.CounterVec
+	DuplicatesDropped  *prometheus.CounterVec
+	AnomaliesDetected  *prometheus.CounterVec
+	MessagesPublished  *prometheus.CounterVec
+	PublishErrors      *prometheus.CounterVec
+	PublishLatency     *prometheus.HistogramVec
+	RedisOperations    *prometheus.CounterVec
+	RedisErrors        *prometheus.CounterVec
+	DLQMessages        *prometheus.CounterVec
+	DLQErrors          prometheus.Counter
+	SpeedViolations    prometheus.Counter
+	TempAnomalies      prometheus.Counter
+	FuelLowEvents      prometheus.Counter
+	GeofenceViolations prometheus.Counter
+	ActiveWorkers      prometheus.Gauge
+	BackpressureEvents prometheus.Counter
+	ConsumerRebalances prometheus.Counter
 }
 
 // NewMetrics creates and registers all Prometheus metrics
@@ -146,6 +147,13 @@ func NewMetrics(namespace string) *Metrics {
 				Help:      "Total number of messages sent to DLQ",
 			},
 			[]string{"reason"},
+		),
+		DLQErrors: promauto.NewCounter(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "dlq_errors_total",
+				Help:      "Total number of DLQ publish errors",
+			},
 		),
 		SpeedViolations: promauto.NewCounter(
 			prometheus.CounterOpts{

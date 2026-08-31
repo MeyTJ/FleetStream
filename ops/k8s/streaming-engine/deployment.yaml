@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streaming-engine
+  namespace: fleetstream
+  labels:
+    app: streaming-engine
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: streaming-engine
+  template:
+    metadata:
+      labels:
+        app: streaming-engine
+    spec:
+      containers:
+        - name: streaming-engine
+          image: fleetstream/streaming-engine:latest
+          ports:
+            - name: admin
+              containerPort: 8081
+            - name: metrics
+              containerPort: 9091
+          envFrom:
+            - configMapRef:
+                name: fleetstream-config
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: redis-password
+            - name: KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: kafka-sasl-mechanism
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: kafka-sasl-username
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: kafka-sasl-password
+          volumeMounts:
+            - name: kafka-ca
+              mountPath: /etc/fleetstream/certs
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: admin
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: admin
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+      volumes:
+        - name: kafka-ca
+          secret:
+            secretName: fleetstream-kafka-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: streaming-engine
+  namespace: fleetstream
+  labels:
+    app: streaming-engine
+spec:
+  selector:
+    app: streaming-engine
+  ports:
+    - name: admin
+      port: 8081
+      targetPort: admin
+    - name: metrics
+      port: 9091
+      targetPort: metrics

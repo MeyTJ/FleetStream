@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bff-api
+  namespace: fleetstream
+  labels:
+    app: bff-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bff-api
+  template:
+    metadata:
+      labels:
+        app: bff-api
+    spec:
+      containers:
+        - name: bff-api
+          image: fleetstream/bff-api:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: fleetstream-config
+          env:
+            - name: ConnectionStrings__Redis
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: redis-connection
+            - name: ConnectionStrings__Kafka
+              value: "kafka.fleetstream.svc.cluster.local:9092"
+            - name: Kafka__Brokers
+              value: "kafka.fleetstream.svc.cluster.local:9092"
+            - name: Kafka__TlsEnabled
+              value: "true"
+            - name: Kafka__CaCertPath
+              value: "/etc/fleetstream/certs/kafka-ca.pem"
+            - name: Kafka__SaslMechanism
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: kafka-sasl-mechanism
+            - name: Kafka__SaslUsername
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: kafka-sasl-username
+            - name: Kafka__SaslPassword
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: kafka-sasl-password
+            - name: Jwt__Issuer
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: jwt-issuer
+            - name: Jwt__JwksUri
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: jwt-jwks-uri
+          volumeMounts:
+            - name: kafka-ca
+              mountPath: /etc/fleetstream/certs
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health/live
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health/ready
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: kafka-ca
+          secret:
+            secretName: fleetstream-kafka-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff-api
+  namespace: fleetstream
+  labels:
+    app: bff-api
+spec:
+  selector:
+    app: bff-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

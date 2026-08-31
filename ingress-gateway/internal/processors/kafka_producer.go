@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/fleetstream/ingress-gateway/internal/observability"
+	"github.com/fleetstream/ingress-gateway/pkg/kafkasecurity"
 	"github.com/fleetstream/ingress-gateway/pkg/models"
 	"github.com/sirupsen/logrus"
 )
@@ -16,6 +18,7 @@ import (
 // KafkaProducer handles publishing telemetry to Kafka with backpressure support
 type KafkaProducer struct {
 	producer sarama.AsyncProducer
+	brokers  []string
 	topic    string
 	logger   *logrus.Logger
 
@@ -26,15 +29,16 @@ type KafkaProducer struct {
 
 	// Backpressure state
 	backpressureState atomic.Int32
-	queueDepth       atomic.Int64
-	dropCount        atomic.Uint64
-	errorCount       atomic.Uint64
+	queueDepth        atomic.Int64
+	dropCount         atomic.Uint64
+	errorCount        atomic.Uint64
 }
 
 // KafkaProducerConfig holds configuration for the Kafka producer
 type KafkaProducerConfig struct {
 	Brokers        []string
 	Topic          string
+	ClientID       string
 	Compression    string
 	DropOnFull     bool
 	MaxQueueDepth  int
@@ -45,13 +49,19 @@ type KafkaProducerConfig struct {
 // NewKafkaProducer creates a new Kafka producer with backpressure handling
 func NewKafkaProducer(cfg KafkaProducerConfig) (*KafkaProducer, error) {
 	saramaConfig := sarama.NewConfig()
+	if cfg.ClientID != "" {
+		saramaConfig.ClientID = cfg.ClientID
+	}
 	saramaConfig.Producer.Return.Successes = false
 	saramaConfig.Producer.Return.Errors = true
 	saramaConfig.Producer.Compression = getCompressionCodec(cfg.Compression)
 	saramaConfig.Producer.Flush.Frequency = 10 * time.Millisecond
 	saramaConfig.Producer.Flush.Messages = 100
 	saramaConfig.Producer.Retry.Max = 3
-	saramaConfig.Net.MaxInFlight = 5
+	saramaConfig.Net.MaxOpenRequests = 5
+	if err := kafkasecurity.Apply(saramaConfig, kafkasecurity.FromEnv()); err != nil {
+		return nil, err
+	}
 
 	producer, err := sarama.NewAsyncProducer(cfg.Brokers, saramaConfig)
 	if err != nil {
@@ -59,12 +69,13 @@ func NewKafkaProducer(cfg KafkaProducerConfig) (*KafkaProducer, error) {
 	}
 
 	p := &KafkaProducer{
-		producer:        producer,
-		topic:           cfg.Topic,
-		logger:          cfg.Logger,
-		dropOnFull:      cfg.DropOnFull,
-		maxQueueDepth:   cfg.MaxQueueDepth,
-		alertThreshold:  cfg.AlertThreshold,
+		producer:       producer,
+		brokers:        cfg.Brokers,
+		topic:          cfg.Topic,
+		logger:         cfg.Logger,
+		dropOnFull:     cfg.DropOnFull,
+		maxQueueDepth:  cfg.MaxQueueDepth,
+		alertThreshold: cfg.AlertThreshold,
 	}
 
 	// Start error handler
@@ -81,14 +92,22 @@ func (p *KafkaProducer) Publish(ctx context.Context, telemetry models.Normalized
 		return err
 	}
 
+	headers := []sarama.RecordHeader{
+		{Key: []byte("source"), Value: []byte(telemetry.Source)},
+		{Key: []byte("timestamp"), Value: []byte(time.Now().Format(time.RFC3339))},
+	}
+	if id := observability.CorrelationID(ctx); id != "" {
+		headers = append(headers, sarama.RecordHeader{Key: []byte("X-Correlation-Id"), Value: []byte(id)})
+	}
+	if tp := observability.Traceparent(ctx); tp != "" {
+		headers = append(headers, sarama.RecordHeader{Key: []byte("traceparent"), Value: []byte(tp)})
+	}
+
 	msg := &sarama.ProducerMessage{
-		Topic: p.topic,
-		Key:   sarama.StringEncoder(telemetry.TruckID),
-		Value: sarama.ByteEncoder(data),
-		Headers: []sarama.RecordHeader{
-			{Key: []byte("source"), Value: []byte(telemetry.Source)},
-			{Key: []byte("timestamp"), Value: []byte(time.Now().Format(time.RFC3339))},
-		},
+		Topic:   p.topic,
+		Key:     sarama.StringEncoder(telemetry.TruckID),
+		Value:   sarama.ByteEncoder(data),
+		Headers: headers,
 	}
 
 	// Check backpressure before publishing
@@ -152,7 +171,43 @@ type ProducerStats struct {
 	ErrorCount uint64
 }
 
-// Close gracefully shuts down the producer
+func (p *KafkaProducer) Ready(ctx context.Context) error {
+	cfg := sarama.NewConfig()
+	cfg.Net.DialTimeout = 2 * time.Second
+	cfg.Net.ReadTimeout = 2 * time.Second
+	cfg.Net.WriteTimeout = 2 * time.Second
+	cfg.Metadata.Timeout = 2 * time.Second
+	if err := kafkasecurity.Apply(cfg, kafkasecurity.FromEnv()); err != nil {
+		return err
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		client, err := sarama.NewClient(p.brokers, cfg)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer client.Close()
+		if err := client.RefreshMetadata(); err != nil {
+			errCh <- err
+			return
+		}
+		if len(client.Brokers()) == 0 {
+			errCh <- errors.New("no kafka brokers reachable")
+			return
+		}
+		errCh <- nil
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		return err
+	}
+}
+
 func (p *KafkaProducer) Close() error {
 	return p.producer.Close()
 }

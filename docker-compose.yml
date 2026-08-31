@@ -1,0 +1,133 @@
+{
+  "version": "3.8",
+  "services": {
+    "redis": {
+      "image": "redis:7-alpine",
+      "container_name": "fleetstream-redis",
+      "ports": ["6379:6379"],
+      "healthcheck": {
+        "test": ["CMD", "redis-cli", "ping"],
+        "interval": "10s",
+        "timeout": "3s",
+        "retries": 3
+      },
+      "networks": ["fleetstream-net"]
+    },
+    "zookeeper": {
+      "image": "confluentinc/cp-zookeeper:7.5.0",
+      "container_name": "fleetstream-zookeeper",
+      "environment": {
+        "ZOOKEEPER_CLIENT_PORT": "2181",
+        "ZOOKEEPER_TICK_TIME": "2000"
+      },
+      "networks": ["fleetstream-net"]
+    },
+    "kafka": {
+      "image": "confluentinc/cp-kafka:7.5.0",
+      "container_name": "fleetstream-kafka",
+      "depends_on": ["zookeeper"],
+      "ports": ["9092:9092"],
+      "environment": {
+        "KAFKA_BROKER_ID": "1",
+        "KAFKA_ZOOKEEPER_CONNECT": "zookeeper:2181",
+        "KAFKA_ADVERTISED_LISTENERS": "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092",
+        "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP": "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT",
+        "KAFKA_INTER_BROKER_LISTENER_NAME": "PLAINTEXT",
+        "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR": "1",
+        "KAFKA_AUTO_CREATE_TOPICS_ENABLE": "true"
+      },
+      "networks": ["fleetstream-net"]
+    },
+    "ingress-gateway": {
+      "build": {
+        "context": "./ingress-gateway",
+        "dockerfile": "Dockerfile"
+      },
+      "container_name": "fleetstream-ingress-gateway",
+      "depends_on": ["kafka"],
+      "ports": ["8080:8080", "50051:50051", "9090:9090"],
+      "environment": {
+        "KAFKA_BROKERS": "kafka:9092",
+        "HTTP_PORT": "8080",
+        "LOG_LEVEL": "info"
+      },
+      "healthcheck": {
+        "test": ["CMD", "curl", "-f", "http://localhost:8080/health/ready"],
+        "interval": "10s",
+        "timeout": "5s",
+        "retries": 5,
+        "start_period": "20s"
+      },
+      "networks": ["fleetstream-net"]
+    },
+    "streaming-engine": {
+      "build": {
+        "context": "./streaming-engine",
+        "dockerfile": "Dockerfile"
+      },
+      "container_name": "fleetstream-streaming-engine",
+      "depends_on": ["kafka", "redis"],
+      "ports": ["9091:9091", "8081:8081"],
+      "environment": {
+        "KAFKA_BROKERS": "kafka:9092",
+        "REDIS_ADDR": "redis:6379",
+        "LOG_LEVEL": "info"
+      },
+      "healthcheck": {
+        "test": ["CMD", "wget", "-qO-", "http://localhost:8081/health/ready"],
+        "interval": "10s",
+        "timeout": "5s",
+        "retries": 5,
+        "start_period": "20s"
+      },
+      "networks": ["fleetstream-net"]
+    },
+    "bff-api": {
+      "profiles": ["production"],
+      "build": {
+        "context": "./BffApi",
+        "dockerfile": "docker/Dockerfile"
+      },
+      "container_name": "fleetstream-bff-api",
+      "depends_on": ["redis", "kafka", "streaming-engine"],
+      "ports": ["8080:8080"],
+      "environment": {
+        "ASPNETCORE_ENVIRONMENT": "Production",
+        "ConnectionStrings__Redis": "redis:6379,abortConnect=false",
+        "ConnectionStrings__Kafka": "kafka:9092",
+        "Kafka__Brokers": "kafka:9092",
+        "Jwt__Issuer": "${JWT_ISSUER:-https://auth.fleetstream.example.com}",
+        "Jwt__Audience": "${JWT_AUDIENCE:-fleetstream-bff}",
+        "Jwt__JwksUri": "${JWT_JWKS_URI:-https://auth.fleetstream.example.com/.well-known/jwks.json}",
+        "Features__DevToken": "false"
+      },
+      "networks": ["fleetstream-net"]
+    },
+    "bff-api-dev": {
+      "profiles": ["dev"],
+      "build": {
+        "context": "./BffApi",
+        "dockerfile": "docker/Dockerfile"
+      },
+      "container_name": "fleetstream-bff-api-dev",
+      "depends_on": ["redis", "kafka", "streaming-engine", "ingress-gateway"],
+      "ports": ["8082:8080"],
+      "environment": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__Redis": "redis:6379,abortConnect=false",
+        "ConnectionStrings__Kafka": "kafka:9092",
+        "Kafka__Brokers": "kafka:9092",
+        "Jwt__Issuer": "${JWT_ISSUER:-https://auth.fleetstream.example.com}",
+        "Jwt__Audience": "${JWT_AUDIENCE:-fleetstream-bff}",
+        "Jwt__SigningKey": "${JWT_SIGNING_KEY:-this-is-a-dev-signing-key-at-least-32-chars!!}",
+        "Features__DevToken": "true"
+      },
+      "networks": ["fleetstream-net"]
+    }
+  },
+  "networks": {
+    "fleetstream-net": {
+      "driver": "bridge"
+    }
+  }
+}

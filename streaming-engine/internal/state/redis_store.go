@@ -23,7 +23,7 @@ const (
 
 // RedisStateStore manages truck state in Redis
 type RedisStateStore struct {
-	client  *redis.Client
+	client  redis.UniversalClient
 	cfg     *config.RedisConfig
 	logger  *logrus.Logger
 	metrics *metrics.Metrics
@@ -31,17 +31,20 @@ type RedisStateStore struct {
 
 // NewRedisStateStore creates a new Redis state store
 func NewRedisStateStore(cfg *config.RedisConfig, logger *logrus.Logger, m *metrics.Metrics) (*RedisStateStore, error) {
-	client := redis.NewClusterClient(&redis.ClusterOptions{
-		Addrs:    cfg.Addresses,
-		Password: cfg.Password,
-		DB:       cfg.DB,
-		PoolSize: cfg.PoolSize,
-	})
+	if len(cfg.Addresses) == 0 {
+		return nil, fmt.Errorf("redis addresses required")
+	}
+
+	client, err := newRedisClient(cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
@@ -51,6 +54,29 @@ func NewRedisStateStore(cfg *config.RedisConfig, logger *logrus.Logger, m *metri
 		logger:  logger,
 		metrics: m,
 	}, nil
+}
+
+func newRedisClient(cfg *config.RedisConfig) (redis.UniversalClient, error) {
+	useCluster := cfg.Cluster || len(cfg.Addresses) > 1
+	if useCluster {
+		return redis.NewClusterClient(&redis.ClusterOptions{
+			Addrs:    cfg.Addresses,
+			Password: cfg.Password,
+			PoolSize: cfg.PoolSize,
+		}), nil
+	}
+
+	return redis.NewClient(&redis.Options{
+		Addr:     cfg.Addresses[0],
+		Password: cfg.Password,
+		DB:       cfg.DB,
+		PoolSize: cfg.PoolSize,
+	}), nil
+}
+
+// Ping checks Redis connectivity.
+func (s *RedisStateStore) Ping(ctx context.Context) error {
+	return s.client.Ping(ctx).Err()
 }
 
 // GetTruckState retrieves the current state of a truck
@@ -91,22 +117,30 @@ func (s *RedisStateStore) SetTruckState(ctx context.Context, state *models.Truck
 	return nil
 }
 
-// CheckDuplicate checks if a message has already been processed using SETNX
+// CheckDuplicate reports whether messageID was already marked processed.
 func (s *RedisStateStore) CheckDuplicate(ctx context.Context, messageID string) (bool, error) {
 	key := DedupPrefix + messageID
-
-	added, err := s.client.SetNX(ctx, key, "1", s.cfg.DedupTTL).Result()
+	n, err := s.client.Exists(ctx, key).Result()
 	if err != nil {
 		s.metrics.RedisErrors.WithLabelValues("dedup_check").Inc()
 		return false, err
 	}
-
-	isDuplicate := !added
+	isDuplicate := n > 0
 	if isDuplicate {
 		s.metrics.DuplicatesDropped.WithLabelValues("redis").Inc()
 	}
-
 	return isDuplicate, nil
+}
+
+// MarkProcessed records a message ID after successful process + state + publish.
+func (s *RedisStateStore) MarkProcessed(ctx context.Context, messageID string) error {
+	key := DedupPrefix + messageID
+	if err := s.client.Set(ctx, key, "1", s.cfg.DedupTTL).Err(); err != nil {
+		s.metrics.RedisErrors.WithLabelValues("dedup_mark").Inc()
+		return err
+	}
+	s.metrics.RedisOperations.WithLabelValues("dedup_mark", "ok").Inc()
+	return nil
 }
 
 // SaveCheckpoint saves the current consumer offset

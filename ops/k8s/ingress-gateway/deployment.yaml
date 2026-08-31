@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingress-gateway
+  namespace: fleetstream
+  labels:
+    app: ingress-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ingress-gateway
+  template:
+    metadata:
+      labels:
+        app: ingress-gateway
+    spec:
+      containers:
+        - name: ingress-gateway
+          image: fleetstream/ingress-gateway:latest
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 50051
+            - name: metrics
+              containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: fleetstream-config
+          env:
+            - name: KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: kafka-sasl-mechanism
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: kafka-sasl-username
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fleetstream-secrets
+                  key: kafka-sasl-password
+          volumeMounts:
+            - name: kafka-ca
+              mountPath: /etc/fleetstream/certs
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: kafka-ca
+          secret:
+            secretName: fleetstream-kafka-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-gateway
+  namespace: fleetstream
+  labels:
+    app: ingress-gateway
+spec:
+  selector:
+    app: ingress-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+    - name: metrics
+      port: 9090
+      targetPort: metrics
