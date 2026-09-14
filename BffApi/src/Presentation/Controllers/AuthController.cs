@@ -35,7 +35,7 @@ public sealed class AuthController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        var (token, expires) = _issuer.Issue(req.Subject, req.Roles ?? Array.Empty<string>());
+        var (token, expires) = _issuer.Issue(req.Subject, req.Roles ?? Array.Empty<string>(), req.Region);
         return Ok(new DevTokenResponse(token, expires));
     }
 }
@@ -47,6 +47,10 @@ public sealed record DevTokenRequest : IValidatableObject
     public required string Subject { get; init; }
 
     public string[]? Roles { get; init; }
+
+    /// <summary>Optional region code — drives the region:{regionCode} SignalR group (§3.5).</summary>
+    [StringLength(32, ErrorMessage = "region must be at most 32 chars.")]
+    public string? Region { get; init; }
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {

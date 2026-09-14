@@ -2,6 +2,7 @@
 using System.Security.Claims;
 using System.Text;
 using FleetStream.Infrastructure.Options;
+using FleetStream.Presentation.Hubs;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -23,7 +24,7 @@ public sealed class DevTokenIssuer
         _clock = clock;
     }
 
-    public (string Token, DateTime ExpiresAt) Issue(string subject, IEnumerable<string> roles)
+    public (string Token, DateTime ExpiresAt) Issue(string subject, IEnumerable<string> roles, string? region = null)
     {
         if (string.IsNullOrWhiteSpace(_opts.SigningKey) || _opts.SigningKey.Length < 32)
             throw new InvalidOperationException(

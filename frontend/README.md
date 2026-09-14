@@ -1,57 +1,103 @@
-# FleetStream Frontend (Phase 4)
+# FleetStream Dashboard (Frontend)
 
-Real-time fleet telemetry dashboard — the public-facing UI for FleetStream operators.
+Real-time fleet operations dashboard for FleetStream — the Phase 4 Next.js frontend that visualizes telemetry, truck states, and alerts from the [BFF API](../BffApi/). Built for 10,000+ trucks with live SignalR updates and REST polling fallback.
 
-## Role in the platform
+## Stack
 
-The frontend is the **only user-facing application** in FleetStream. It consumes the [BFF API](../BffApi/README.md) exclusively via REST and SignalR. It does not call Ingress Gateway or Streaming Engine directly.
-
-```
-Trucks → Ingress → Kafka → Streaming → Redis/Kafka → BFF → Frontend (this app)
-```
-
-## Technology stack (planned)
-
-| Layer | Choice | Rationale |
-|---|---|---|
-| Framework | Next.js 15 (App Router) | SSR for auth shell; RSC for static layout; client islands for real-time widgets |
-| Language | TypeScript (strict) | Contract safety with generated API types |
-| Real-time | `@microsoft/signalr` 10.x | Matches BFF SignalR protocol |
-| Maps | MapLibre GL or Leaflet | Open-source; no vendor lock-in for fleet markers |
-| Styling | Tailwind CSS + shadcn/ui | Consistent design system; accessible primitives |
-| State | TanStack Query + Zustand | Server state vs. ephemeral UI / SignalR buffer |
-| Auth | JWT bearer (dev token / OIDC) | Aligns with [BFF security spec](../BffApi/docs/05-security.md) |
-
-## Documentation
-
-| Document | Description |
+| Concern | Choice |
 |---|---|
-| [docs/README.md](docs/README.md) | Specification index |
-| [docs/01-implementation-phases.md](docs/01-implementation-phases.md) | **Phased delivery plan** — PO, SO, and Team Lead perspectives |
-| [docs/02-architecture.md](docs/02-architecture.md) | Frontend architecture (planned) |
-| [docs/03-bff-integration.md](docs/03-bff-integration.md) | REST + SignalR integration contract (planned) |
+| Framework | Next.js 16 (App Router, React 19, strict TypeScript) |
+| Server state | TanStack Query v5 (5 s stale time, 10 s polling) |
+| Real-time | `@microsoft/signalr` 10.x (`/hubs/v1/fleet`) |
+| Map | MapLibre GL (no API key, CSP-safe tiles) |
+| Styling | Tailwind CSS v4 |
+| Icons | lucide-react |
 
 ## Prerequisites
 
-Phase 4 starts when the BFF Phase 3 → Phase 4 contract is satisfied ([BffApi/docs/10-roadmap.md §10.2](../BffApi/docs/10-roadmap.md)):
+- **Node.js 24+** and npm 11+ (matches CI — see [`.github/workflows/frontend.yml`](../.github/workflows/frontend.yml))
+- **FleetStream BFF API** running locally on `http://localhost:8080` (see [BffApi/README.md](../BffApi/README.md) or use `docker compose` from the repo root)
 
-- [ ] `02-api-contract.md` and `03-signalr-protocol.md` are ✅ Final
-- [ ] BFF image tagged `v1.0.0` available in registry
-- [ ] OpenAPI document reachable from CI (`/swagger/v1/swagger.json`)
-
-## Local development (once scaffolded)
+## Getting started
 
 ```bash
 cd frontend
-npm install
-cp .env.example .env.local
+npm ci
+cp .env.example .env.local   # adjust URLs if the BFF runs elsewhere
 npm run dev
 ```
 
-Default BFF target: `http://localhost:8080` (root [docker-compose.yml](../docker-compose.yml), `dev` profile).
+Open [http://localhost:3000](http://localhost:3000) and sign in with any operator ID. Login uses the BFF dev-token endpoint (`POST /api/v1/auth/dev-token`, Development-only) and a role preset:
 
-## Related
+| Preset | Roles | Effect |
+|---|---|---|
+| Operator | `fleet:reader`, `alerts:ack` | Read fleet + acknowledge alerts |
+| Viewer | `fleet:reader` | Read-only — Ack button hidden |
+| Admin | `fleet:admin` | Full access (implies reader + ack, joins `telemetry:full`) |
 
-- [DEVELOPMENT_PHASES.md](../DEVELOPMENT_PHASES.md) — platform-wide phase plan
-- [BffApi/docs/02-api-contract.md](../BffApi/docs/02-api-contract.md) — REST surface
-- [BffApi/docs/03-signalr-protocol.md](../BffApi/docs/03-signalr-protocol.md) — WebSocket contract
+## Environment variables
+
+See [`.env.example`](.env.example); copy to `.env.local` for local development. All values are `NEXT_PUBLIC_` (browser-exposed by design — they contain no secrets; the JWT lives in `sessionStorage` for the dev flow and is validated server-side on every call).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8080` | BFF REST base URL |
+| `NEXT_PUBLIC_SIGNALR_HUB_URL` | `http://localhost:8080/hubs/v1/fleet` | SignalR hub URL |
+
+## Scripts
+
+| Command | Description |
+|---|---|
+| `npm run dev` | Start dev server on `http://localhost:3000` |
+| `npm run build` | Production build |
+| `npm run start` | Serve the production build |
+| `npm run lint` | ESLint (`eslint-config-next`, core-web-vitals + TS) |
+| `npm run typecheck` | `tsc --noEmit` (strict, no emit) |
+
+## Project structure
+
+```
+frontend/
+├── src/
+│   ├── app/
+│   │   ├── (dashboard)/        # Authenticated shell: dashboard, trucks, map, alerts, settings
+│   │   │   ├── trucks/[truckId]/   # Truck detail: live state + 24 h telemetry sparkline
+│   │   │   └── alerts/            # Live alert feed + acknowledge
+│   │   └── login/             # Dev-token login with role presets
+│   ├── components/            # Feature components (map, tables, alerts, sparkline, banners)
+│   └── lib/
+│       ├── api-client.ts      # Typed fetch wrapper: JWT injection, RFC 7807 parsing, retries
+│       ├── auth-context.tsx   # Dev-token auth state (sessionStorage)
+│       ├── signalr-provider.tsx  # Hub connection lifecycle, backoff reconnect, group rejoin
+│       ├── hooks/fleet.ts     # TanStack Query hooks per BFF resource
+│       ├── hooks/signalr-events.ts  # Server → store wiring (states, alerts, purge)
+│       ├── alert-store.ts     # Ring buffer (500) + optimistic ack + purge trim
+│       ├── truck-state-store.ts  # Live states (throttle 1/truck/2 s)
+│       └── jwt.ts             # Client-side role claims for UI gating (not a security boundary)
+├── docs/                      # Phase plan and notes
+└── .env.example
+```
+
+## How it works
+
+- **REST bootstrap** — TanStack Query fetches summary, trucks, state, telemetry, and alerts (`GET /api/v1/fleet/*`), with cursor pagination on trucks/alerts.
+- **Live updates** — `SignalRProvider` connects to `/hubs/v1/fleet`, auto-joins the `fleet` + `alerts` groups, and reconnects with exponential backoff (1 s → 30 s cap), re-invoking `JoinFleetGroup` on reconnect. `OnTruckStateUpdate` / `OnFleetUpdate` / `OnAlert` / `OnAlertsPurged` feed the external stores.
+- **Reconnect UX** — `ReconnectBanner` surfaces connection state; stores keep last-known data so the UI never blanks.
+- **Telemetry history** — the truck detail page renders a 24 h sparkline from `GET /api/v1/fleet/trucks/{id}/telemetry` (speed / engine temp / fuel / risk score), with a compact variant in the map detail panel.
+- **Alerts & acks** — REST initial load merges into a client ring buffer (500 max); `OnAlert` prepends live entries. Ack is optimistic with rollback on failure, and the Ack button is role-gated to mirror the BFF `AlertsAck` policy (`alerts:ack` or `fleet:admin`).
+- **Errors** — the API client parses RFC 7807 `ProblemDetails`; `ErrorState` renders title/detail with correlation + trace IDs and a retry action.
+
+## CI
+
+[`.github/workflows/frontend.yml`](../.github/workflows/frontend.yml) runs on pushes/PRs touching `frontend/**`:
+
+1. `npm ci`
+2. `npm run lint`
+3. `npm run typecheck`
+4. `npm run build`
+
+## Docs
+
+- [Implementation phases (F0–F5)](docs/01-implementation-phases.md)
+- [BFF API contract](../BffApi/docs/02-api-contract.md)
+- [SignalR protocol](../BffApi/docs/03-signalr-protocol.md)

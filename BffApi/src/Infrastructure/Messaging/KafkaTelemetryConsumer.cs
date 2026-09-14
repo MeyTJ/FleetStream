@@ -26,6 +26,12 @@ public sealed class KafkaTelemetryConsumer : BackgroundService
     private readonly INotificationService _notifier;
     private readonly ILogger<KafkaTelemetryConsumer> _logger;
 
+    // §3.3: OnTruckStateUpdate is capped at one broadcast per truck per 2 s
+    // (server-side rate limit). Telemetry samples stream to the
+    // telemetry:full group at full rate instead.
+    private static readonly TimeSpan StateBroadcastMinInterval = TimeSpan.FromSeconds(2);
+    private readonly Dictionary<string, DateTime> _lastStateBroadcastAt = new();
+
     public KafkaTelemetryConsumer(
         IOptions<KafkaOptions> opts,
         ITruckStateStore states,
@@ -114,6 +120,16 @@ public sealed class KafkaTelemetryConsumer : BackgroundService
                 await _states.SetStateAsync(state, stoppingToken);
                 await _history.AppendAsync(telemetry, stoppingToken);
                 await _notifier.BroadcastTelemetryUpdateAsync(telemetry, stoppingToken);
+
+                // Throttle state broadcasts to one per truck per 2 s (§3.3).
+                var nowUtc = DateTime.UtcNow;
+                if (!_lastStateBroadcastAt.TryGetValue(state.TruckId, out var lastBroadcast) ||
+                    nowUtc - lastBroadcast >= StateBroadcastMinInterval)
+                {
+                    _lastStateBroadcastAt[state.TruckId] = nowUtc;
+                    await _notifier.BroadcastTruckStateAsync(state, stoppingToken);
+                }
+
                 consumer.Commit(cr);
 
                 sw.Stop();
