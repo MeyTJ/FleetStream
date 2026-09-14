@@ -73,12 +73,29 @@ export function applyFleetUpdate(updates: TruckState[]): void {
   emit();
 }
 
-/** Remove a truck from the map (e.g. on presence change to offline). */
+/**
+ * Apply an OnPresenceChange (protocol §3.3) transition without touching the
+ * truck's last known position, so an offline truck is greyed out rather than
+ * dropped from the map (§3.8).
+ */
 export function markTruckOffline(truckId: string): void {
   const existing = states.get(truckId);
   if (!existing) return;
   states = new Map(states);
-  states.set(truckId, { ...existing, isOnline: false });
+  states.set(truckId, { ...existing, isOnline: false, isMoving: false });
+  emit();
+}
+
+/**
+ * Reverse transition. The BFF only pushes explicit offline events — a truck
+ * coming back online normally arrives via OnTruckStateUpdate — but the event
+ * carries a boolean, so the client honours both values.
+ */
+export function markTruckOnline(truckId: string): void {
+  const existing = states.get(truckId);
+  if (!existing || existing.isOnline) return;
+  states = new Map(states);
+  states.set(truckId, { ...existing, isOnline: true });
   emit();
 }
 

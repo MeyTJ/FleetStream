@@ -26,6 +26,15 @@ public static class BffMetrics
     public static readonly Counter<long> AlertsAcknowledgedTotal =
         Meter.CreateCounter<long>("fleetstream_bff_alerts_acknowledged_total", description: "Alerts acknowledged");
 
+    public static readonly Counter<long> PresenceTransitionsTotal =
+        Meter.CreateCounter<long>("fleetstream_bff_presence_transitions_total", description: "Truck online/offline transitions detected by the sweeper");
+
+    public static readonly Counter<long> AlertsPurgedTotal =
+        Meter.CreateCounter<long>("fleetstream_bff_alerts_purged_total", description: "Alerts evicted by ring-buffer retention");
+
+    public static readonly Counter<long> FleetUpdatesTotal =
+        Meter.CreateCounter<long>("fleetstream_bff_fleet_updates_total", description: "Periodic OnFleetUpdate heartbeats broadcast");
+
     public static readonly Counter<long> CacheHitsTotal =
         Meter.CreateCounter<long>("fleetstream_bff_cache_hits_total", description: "Cache hits");
 

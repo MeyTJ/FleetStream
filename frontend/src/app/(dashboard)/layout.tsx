@@ -5,6 +5,7 @@ import { AuthGuard } from "@/components/auth-guard";
 import { Header } from "@/components/header";
 import { Sidebar } from "@/components/sidebar";
 import { SkipToContent } from "@/components/skip-to-content";
+import { SystemMessageBanner } from "@/components/system-message-banner";
 import { SignalRProvider } from "@/lib/signalr-provider";
 import { useSignalREvents } from "@/lib/hooks/signalr-events";
 
@@ -23,6 +24,8 @@ export default function DashboardLayout({
         <div className="flex h-screen flex-col overflow-hidden">
           <SkipToContent />
           <Header />
+          {/* Global ops channel (protocol §3.3 OnSystemMessage) — spans every route. */}
+          <SystemMessageBanner />
           <div className="flex flex-1 overflow-hidden">
             <Sidebar />
             <main

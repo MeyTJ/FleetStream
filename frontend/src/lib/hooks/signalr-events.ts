@@ -12,8 +12,11 @@ import {
   applyTruckState,
   applyFleetUpdate,
   clearTruckStates,
+  markTruckOffline,
+  markTruckOnline,
 } from "@/lib/truck-state-store";
 import { pushAlert, clearAlerts, purgeAlerts } from "@/lib/alert-store";
+import { applySystemMessage, clearSystemMessage } from "@/lib/system-message-store";
 import {
   applyTelemetrySample,
   clearTelemetrySamples,
@@ -60,6 +63,25 @@ export function useSignalREvents() {
       },
     );
 
+    // SignalR protocol §3.3 — the presence sweeper declared a truck offline (or,
+    // defensively, back online). Position is retained; only the online flag moves.
+    connection.on(
+      "OnPresenceChange",
+      (truckId: string, isOnline: boolean) => {
+        if (isOnline) markTruckOnline(truckId);
+        else markTruckOffline(truckId);
+      },
+    );
+
+    // SignalR protocol §3.3 — ops notice (maintenance, backpressure, bulk
+    // presence loss). Rendered by <SystemMessageBanner />.
+    connection.on(
+      "OnSystemMessage",
+      (severity: string, code: string, message: string, timestamp: string) => {
+        applySystemMessage({ severity, code, message, timestamp });
+      },
+    );
+
     registeredRef.current = true;
 
     return () => {
@@ -69,6 +91,8 @@ export function useSignalREvents() {
         connection.off("OnAlert");
         connection.off("OnTelemetrySample");
         connection.off("OnAlertsPurged");
+        connection.off("OnPresenceChange");
+        connection.off("OnSystemMessage");
         registeredRef.current = false;
       }
     };
@@ -80,6 +104,7 @@ export function useSignalREvents() {
       clearTruckStates();
       clearAlerts();
       clearTelemetrySamples();
+      clearSystemMessage();
     }
   }, [token]);
 

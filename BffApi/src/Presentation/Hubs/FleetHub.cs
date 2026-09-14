@@ -9,12 +9,34 @@ using Microsoft.Extensions.Logging;
 
 namespace FleetStream.Presentation.Hubs;
 
+/// <summary>
+/// The complete server-to-client contract of docs/03-signalr-protocol.md §3.3.
+/// Parameter *order* is wire-visible: the TypeScript client registers positional
+/// handlers (see frontend/src/lib/hooks/signalr-events.ts), so reordering an
+/// existing signature is a breaking change.
+/// </summary>
 public interface IFleetHubClient
 {
     Task OnTelemetrySample(TruckTelemetry telemetry);
     Task OnTruckStateUpdate(TruckState state);
     Task OnAlert(Alert alert);
     Task OnFleetUpdate(IReadOnlyList<TruckState> states);
+
+    /// <summary>
+    /// §3.3 — the server trimmed its alert retention to <paramref name="count"/>
+    /// newest entries; everything strictly older than
+    /// <paramref name="beforeTimestamp"/> was evicted.
+    /// </summary>
+    Task OnAlertsPurged(int count, DateTime beforeTimestamp);
+
+    /// <summary>§3.3 — the sweeper observed an online/offline transition for a truck.</summary>
+    Task OnPresenceChange(string truckId, bool isOnline);
+
+    /// <summary>
+    /// §3.3 — ops notice. <paramref name="severity"/> is one of info | warn | error;
+    /// <paramref name="code"/> is a stable machine-readable key clients can branch on.
+    /// </summary>
+    Task OnSystemMessage(string severity, string code, string message, DateTime timestamp);
 }
 
 /// <summary>

@@ -127,6 +127,35 @@ public sealed class SignalROptions
 
     [Range(15, 600)]
     public int ClientTimeoutSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// §3.3 OnPresenceChange — a truck with no telemetry for this long is declared
+    /// offline by the sweeper. Default 5 min per the protocol doc.
+    /// </summary>
+    [Range(5, 86_400)]
+    public int OnlineThresholdSeconds { get; set; } = 300;
+
+    /// <summary>§3.7 how often the sweeper runs.</summary>
+    [Range(1, 3600)]
+    public int PresenceSweepIntervalSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// §3.3 OnFleetUpdate — periodic warm-reload snapshot pushed to the fleet group
+    /// when any state changed within the window.
+    /// </summary>
+    [Range(1, 3600)]
+    public int FleetUpdateIntervalSeconds { get; set; } = 5;
+
+    /// <summary>
+    /// §3.3 OnAlertsPurged — the alert count the server retains and tells clients to
+    /// trim to. Mirrors the client-side ring buffer so both sides converge.
+    /// </summary>
+    [Range(1, 100_000)]
+    public int AlertRetentionCount { get; set; } = 500;
+
+    /// <summary>§3.3 how often the retention prune runs.</summary>
+    [Range(1, 3600)]
+    public int AlertPruneIntervalSeconds { get; set; } = 60;
 }
 
 /// <summary>Strongly-typed configuration for the rate limiter.</summary>

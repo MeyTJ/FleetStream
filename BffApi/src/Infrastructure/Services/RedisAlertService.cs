@@ -142,5 +142,80 @@ public sealed class RedisAlertService : IAlertService
             return 0;
         }
     }
+
+    /// <summary>
+    /// §3.3 OnAlertsPurged — trim the canonical store to the newest
+    /// <paramref name="maxRetain"/> alerts and report the cutoff the clients
+    /// must trim their ring buffers to. Ordering is by <see cref="Alert.Timestamp"/>
+    /// descending so the retained set matches what the feed shows.
+    /// </summary>
+    public async Task<AlertPurgeResult> PruneToCapacityAsync(
+        int maxRetain, CancellationToken cancellationToken = default)
+    {
+        if (maxRetain < 0)
+            throw new ArgumentOutOfRangeException(nameof(maxRetain));
+
+        try
+        {
+            var ids = await _db.SetMembersAsync(ActiveSetKey);
+            if (ids.Length == 0)
+                return AlertPurgeResult.None;
+
+            var alerts = new List<Alert>(ids.Length);
+            foreach (var raw in ids)
+            {
+                var id = (string)raw!;
+                var alert = await GetAlertAsync(id, cancellationToken);
+                if (alert is not null)
+                    alerts.Add(alert);
+            }
+
+            // Oldest-first so the eviction boundary (cutoff) is the newest purged.
+            alerts.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
+
+            var excess = alerts.Count - maxRetain;
+            if (excess <= 0)
+                return AlertPurgeResult.None;
+
+            var toPurge = alerts.GetRange(0, excess);
+            var cutoff  = toPurge[^1].Timestamp;
+
+            // Rewrite each truck index HASH field exactly once.
+            foreach (var group in toPurge.GroupBy(a => a.TruckId))
+            {
+                var purgedIds = group.Select(a => a.Id).ToHashSet();
+                var value = await _db.HashGetAsync(TruckIndexKey, group.Key);
+                var idList = value.IsNullOrEmpty
+                    ? new List<string>()
+                    : JsonSerializer.Deserialize<List<string>>((string)value!, _json) ?? new List<string>();
+
+                idList.RemoveAll(id => purgedIds.Contains(id));
+
+                if (idList.Count == 0)
+                    await _db.HashDeleteAsync(TruckIndexKey, group.Key);
+                else
+                    await _db.HashSetAsync(TruckIndexKey, group.Key, JsonSerializer.Serialize(idList, _json));
+            }
+
+            var tx = _db.CreateTransaction();
+            foreach (var a in toPurge)
+            {
+                _ = tx.KeyDeleteAsync(KeyPrefix + a.Id);
+                _ = tx.SetRemoveAsync(ActiveSetKey, a.Id);
+            }
+            await tx.ExecuteAsync();
+
+            _logger.LogInformation(
+                "Pruned {Count} alerts older than {Cutoff:O}; {Retained} retained",
+                toPurge.Count, cutoff, alerts.Count - toPurge.Count);
+
+            return new AlertPurgeResult(toPurge.Count, cutoff);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PruneToCapacityAsync({MaxRetain}) failed", maxRetain);
+            return AlertPurgeResult.None;
+        }
+    }
 }
 

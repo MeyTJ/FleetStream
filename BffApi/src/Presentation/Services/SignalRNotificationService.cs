@@ -115,6 +115,86 @@ public sealed class SignalRNotificationService : INotificationService
         }
     }
 
+    /// <summary>
+    /// §3.3 OnAlertsPurged — the alerts group is auto-joined by every connection
+    /// (§3.4), so the whole client fleet is trimmed in lock-step with the server.
+    /// </summary>
+    public async Task BroadcastAlertsPurgedAsync(
+        int count, DateTime beforeTimestamp, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _typedHub.Clients.Group(FleetHubGroups.Alerts)
+                .OnAlertsPurged(count, AsUtc(beforeTimestamp));
+            RecordOutbound(nameof(IFleetHubClient.OnAlertsPurged));
+            _logger.LogInformation("Broadcasted alert purge: {Count} before {Cutoff:O}",
+                count, AsUtc(beforeTimestamp));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error broadcasting alerts-purged notification");
+        }
+    }
+
+    /// <summary>§3.3 OnPresenceChange — broadcast to the fleet group.</summary>
+    public async Task BroadcastPresenceChangeAsync(
+        string truckId, bool isOnline, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _typedHub.Clients.Group(FleetHubGroups.Fleet)
+                .OnPresenceChange(truckId, isOnline);
+            RecordOutbound(nameof(IFleetHubClient.OnPresenceChange));
+            _logger.LogInformation("Broadcasted presence change for truck {TruckId}: {IsOnline}",
+                truckId, isOnline);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error broadcasting presence change for truck {TruckId}", truckId);
+        }
+    }
+
+    /// <summary>
+    /// §3.3 OnSystemMessage — ops notice to every connected client. Severity is
+    /// normalized so the UI never has to branch on free-form casing.
+    /// </summary>
+    public async Task BroadcastSystemMessageAsync(
+        string severity, string code, string message, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var timestamp = AsUtc(DateTime.UtcNow);
+            await _typedHub.Clients.All
+                .OnSystemMessage(NormalizeSeverity(severity), code, message, timestamp);
+            RecordOutbound(nameof(IFleetHubClient.OnSystemMessage));
+            _logger.LogInformation("Broadcasted system message {Code} ({Severity})",
+                code, NormalizeSeverity(severity));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error broadcasting system message {Code}", code);
+        }
+    }
+
+    /// <summary>
+    /// SignalR serializes DateTime via System.Text.Json, which emits the kind it
+    /// carries. An Unspecified value would produce a timestamp the client parses in
+    /// local time, silently skewing the purge cutoff, so force UTC before sending.
+    /// </summary>
+    private static DateTime AsUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc   => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _                  => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+    };
+
+    private static string NormalizeSeverity(string severity) => severity?.ToLowerInvariant() switch
+    {
+        "warn" or "warning" => "warn",
+        "error" or "err"    => "error",
+        _                   => "info",
+    };
+
     private static void RecordOutbound(string method, int messages = 1) =>
         BffMetrics.SignalRMessagesTotal.Add(messages,
             new KeyValuePair<string, object?>("direction", "outbound"),

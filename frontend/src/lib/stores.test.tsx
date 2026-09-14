@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   pushAlert,
   replaceAlerts,
@@ -15,8 +15,14 @@ import {
   applyFleetUpdate,
   clearTruckStates,
   markTruckOffline,
+  markTruckOnline,
   useTruckStates,
 } from "./truck-state-store";
+import {
+  applySystemMessage,
+  clearSystemMessage,
+  useSystemMessage,
+} from "./system-message-store";
 import {
   applyTelemetrySample,
   clearTelemetrySamples,
@@ -83,6 +89,7 @@ beforeEach(() => {
   clearAlerts();
   clearTruckStates();
   clearTelemetrySamples();
+  clearSystemMessage();
 });
 
 describe("alert-store ring buffer", () => {
@@ -204,6 +211,92 @@ describe("truck-state-store", () => {
     const truck = result.current.get("t9");
     expect(truck?.isOnline).toBe(false);
     expect(truck?.latitude).toBe(50);
+  });
+
+  it("clears the moving flag on an offline transition", () => {
+    // A truck that stopped reporting cannot still be travelling; leaving
+    // isMoving set keeps the map's motion styling alive on a stale marker.
+    const { result } = renderHook(() => useTruckStates());
+    act(() => applyTruckState(makeTruckState({ truckId: "t9", isMoving: true })));
+    act(() => markTruckOffline("t9"));
+    expect(result.current.get("t9")?.isMoving).toBe(false);
+  });
+
+  it("restores a truck to online without inventing a position", () => {
+    const { result } = renderHook(() => useTruckStates());
+    act(() => {
+      applyTruckState(makeTruckState({ truckId: "t5", isOnline: false }));
+      markTruckOnline("t5");
+    });
+    expect(result.current.get("t5")?.isOnline).toBe(true);
+
+    // Unknown truck ids are ignored rather than creating an empty marker.
+    act(() => markTruckOnline("never-seen"));
+    expect(result.current.has("never-seen")).toBe(false);
+  });
+});
+
+describe("system-message-store", () => {
+  it("records an ops notice with a normalized severity", () => {
+    const { result } = renderHook(() => useSystemMessage());
+    expect(result.current).toBeNull();
+
+    act(() =>
+      applySystemMessage({
+        severity: "WARNING",
+        code: "presence.bulk_offline",
+        message: "12 trucks stopped reporting telemetry.",
+        timestamp: "2026-08-29T12:36:00.000Z",
+      }),
+    );
+
+    expect(result.current?.severity).toBe("warn");
+    expect(result.current?.code).toBe("presence.bulk_offline");
+    expect(result.current?.timestamp).toBe("2026-08-29T12:36:00.000Z");
+  });
+
+  it("falls back to info for an unrecognized severity", () => {
+    const { result } = renderHook(() => useSystemMessage());
+    act(() =>
+      applySystemMessage({ severity: "critical", code: "x", message: "boom" }),
+    );
+    expect(result.current?.severity).toBe("info");
+  });
+
+  it("rejects an empty message without clearing the live notice", () => {
+    const { result } = renderHook(() => useSystemMessage());
+    act(() =>
+      applySystemMessage({ severity: "error", code: "keep", message: "first" }),
+    );
+    let accepted: boolean = true;
+    act(() => {
+      accepted = applySystemMessage({ severity: "warn", message: "   " });
+    });
+    expect(accepted).toBe(false);
+    expect(result.current?.code).toBe("keep");
+  });
+
+  it("keeps only the newest notice", () => {
+    const { result } = renderHook(() => useSystemMessage());
+    act(() => applySystemMessage({ severity: "info", code: "a", message: "one" }));
+    act(() => applySystemMessage({ severity: "warn", code: "b", message: "two" }));
+    expect(result.current?.code).toBe("b");
+  });
+
+  it("expires a notice instead of leaving a stale banner up", () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useSystemMessage());
+      act(() =>
+        applySystemMessage({ severity: "warn", code: "ttl", message: "temp" }),
+      );
+      expect(result.current?.code).toBe("ttl");
+
+      act(() => vi.advanceTimersByTime(5 * 60 * 1000 + 1));
+      expect(result.current).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

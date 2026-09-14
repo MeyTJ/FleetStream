@@ -28,7 +28,11 @@ beforeEach(() => resetErrorReporterForTests());
 afterEach(() => {
   // Leftover listeners would consume the shared dedupe budget in later tests,
   // which makes a leak surface as an unrelated count assertion failing.
-  while (cleanups.length) cleanups.pop()();
+  let cleanup = cleanups.pop();
+  while (cleanup) {
+    cleanup();
+    cleanup = cleanups.pop();
+  }
   resetErrorReporterForTests();
 });
 

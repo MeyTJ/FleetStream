@@ -121,6 +121,10 @@ services.AddScoped<INotificationService,      SignalRNotificationService>();
 services.AddHostedService<KafkaTelemetryConsumer>();
 services.AddHostedService<KafkaAlertConsumer>();
 
+// §3.3 protocol maintenance: presence sweeper (OnPresenceChange), fleet-update
+// heartbeat (OnFleetUpdate), and alert retention (OnAlertsPurged).
+services.AddHostedService<ProtocolMaintenanceService>();
+
 // -----------------------------------------------------------------------------
 //  Vertical-slice handlers  (pure DI + Decorator pattern)
 //

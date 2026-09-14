@@ -42,6 +42,20 @@ public interface ITruckStateStore
     Task RemoveStateAsync(string truckId, CancellationToken cancellationToken = default);
     Task<bool> ExistsAsync(string truckId, CancellationToken cancellationToken = default);
     Task<long> GetOnlineCountAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// §3.3 OnPresenceChange — trucks still flagged online whose last telemetry is
+    /// older than <paramref name="olderThan"/>. Returned states carry the stale
+    /// <see cref="TruckState.Timestamp"/> so the sweeper can log the gap.
+    /// </summary>
+    Task<IReadOnlyList<TruckState>> GetStaleOnlineStatesAsync(
+        TimeSpan olderThan, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Flip a truck to offline without deleting its last known position, so the
+    /// map keeps rendering it greyed out (§3.8 "Truck is in Maintenance").
+    /// </summary>
+    Task MarkOfflineAsync(string truckId, CancellationToken cancellationToken = default);
 }
 
 public interface INotificationService
@@ -52,6 +66,39 @@ public interface INotificationService
     Task BroadcastFleetUpdateAsync(IEnumerable<TruckState> states, CancellationToken cancellationToken = default);
     Task SendToGroupAsync(string groupName, string method, object payload, CancellationToken cancellationToken = default);
     Task SendToUserAsync(string userId, string method, object payload, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// §3.3 OnAlertsPurged — notify the alerts group that the server evicted
+    /// ring-buffer entries older than <paramref name="beforeTimestamp"/>.
+    /// </summary>
+    Task BroadcastAlertsPurgedAsync(
+        int count, DateTime beforeTimestamp, CancellationToken cancellationToken = default);
+
+    /// <summary>§3.3 OnPresenceChange — notify the fleet group of an online/offline transition.</summary>
+    Task BroadcastPresenceChangeAsync(
+        string truckId, bool isOnline, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// §3.3 OnSystemMessage — ops notice to all clients (maintenance, backpressure,
+    /// degraded cache). Severity is normalized to info | warn | error.
+    /// </summary>
+    Task BroadcastSystemMessageAsync(
+        string severity, string code, string message, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// §3.3 — outcome of a server-side alert ring-buffer eviction pass.
+/// </summary>
+/// <param name="PurgedCount">How many alerts were evicted.</param>
+/// <param name="CutoffTimestamp">
+/// Exclusive cutoff: every alert strictly older than this is now gone. Clients trim
+/// their local buffer to match, so the value must be UTC with an explicit offset.
+/// </param>
+public sealed record AlertPurgeResult(int PurgedCount, DateTime CutoffTimestamp)
+{
+    public static readonly AlertPurgeResult None = new(0, default);
+
+    public bool HasWork => PurgedCount > 0;
 }
 
 public interface IAlertService
@@ -62,6 +109,14 @@ public interface IAlertService
     Task CreateAlertAsync(Alert alert, CancellationToken cancellationToken = default);
     Task AcknowledgeAlertAsync(string id, string acknowledgedBy, CancellationToken cancellationToken = default);
     Task<int> GetActiveAlertCountAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// §3.3 — enforce the client-visible retention rule by trimming the canonical
+    /// store to the newest <paramref name="maxRetain"/> alerts, deleting the
+    /// remainder, and reporting the cutoff the clients must trim to.
+    /// </summary>
+    Task<AlertPurgeResult> PruneToCapacityAsync(
+        int maxRetain, CancellationToken cancellationToken = default);
 }
 
 public interface ITelemetryHistoryStore
