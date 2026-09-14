@@ -1,23 +1,13 @@
 "use client";
 
-import { SignalRProvider } from "@/lib/signalr-provider";
-import { useSignalREvents } from "@/lib/hooks/signalr-events";
 import { ReconnectBanner } from "@/components/reconnect-banner";
 import { AlertsPurgeBanner } from "@/components/alerts-purge-banner";
 import { AlertFeed } from "@/components/alert-feed";
 import { AlertToasts } from "@/components/alert-toast";
 
 export default function AlertsPage() {
-  return (
-    <SignalRProvider>
-      <AlertsPageInner />
-    </SignalRProvider>
-  );
-}
-
-function AlertsPageInner() {
-  useSignalREvents();
-
+  // The hub connection and event subscriptions are owned by the dashboard
+  // layout (src/app/(dashboard)/layout.tsx) so they survive navigation.
   return (
     <div className="space-y-6">
       <ReconnectBanner />

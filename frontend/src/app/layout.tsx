@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { QueryProvider } from "@/lib/query-provider";
+import { ErrorReporter } from "@/components/error-reporter";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,6 +28,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex h-full flex-col">
+        {/* Mounted above the providers so a crash inside one is still captured. */}
+        <ErrorReporter />
         <QueryProvider>
           <AuthProvider>{children}</AuthProvider>
         </QueryProvider>

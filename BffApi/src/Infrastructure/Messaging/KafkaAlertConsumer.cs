@@ -4,6 +4,7 @@ using FleetStream.Application.Abstractions;
 using FleetStream.Core.Domain.Entities;
 using FleetStream.Infrastructure.Metrics;
 using FleetStream.Infrastructure.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -13,17 +14,19 @@ namespace FleetStream.Infrastructure.Messaging;
 public sealed class KafkaAlertConsumer : BackgroundService
 {
     private readonly KafkaOptions _opts;
-    private readonly INotificationService _notifier;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<KafkaAlertConsumer> _logger;
 
+    // INotificationService is scoped; a BackgroundService is a singleton. See
+    // KafkaTelemetryConsumer for the full captive-dependency rationale.
     public KafkaAlertConsumer(
         IOptions<KafkaOptions> opts,
-        INotificationService notifier,
+        IServiceScopeFactory scopeFactory,
         ILogger<KafkaAlertConsumer> logger)
     {
-        _opts     = opts.Value;
-        _notifier = notifier;
-        _logger   = logger;
+        _opts         = opts.Value;
+        _scopeFactory = scopeFactory;
+        _logger       = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -79,7 +82,9 @@ public sealed class KafkaAlertConsumer : BackgroundService
 
                 if (alert is null) continue;
 
-                await _notifier.BroadcastAlertAsync(alert, stoppingToken);
+                using var scope = _scopeFactory.CreateScope();
+                var notifier = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                await notifier.BroadcastAlertAsync(alert, stoppingToken);
                 consumer.Commit(cr);
 
                 sw.Stop();

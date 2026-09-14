@@ -1,7 +1,21 @@
 ﻿# Phase 3 - BFF API  -  Senior-Level Review & Stabilization Log
 
 ## Build status
-`dotnet build BffApi\FleetStream.sln` -> **0 warnings, 0 errors**.
+`dotnet build BffApi\FleetStream.sln` -> **0 errors, 6 warnings**.
+
+> Measured 2026-09-14. This previously read "0 warnings, 0 errors", which was no
+> longer true. The 6 warnings are:
+> - 5 x `NU1510` in `FleetStream.Infrastructure.csproj` — redundant
+>   `PackageReference`s (`Microsoft.Extensions.Options`,
+>   `Microsoft.Extensions.Hosting.Abstractions`,
+>   `Microsoft.Extensions.Diagnostics.HealthChecks`) that the .NET 10 shared
+>   framework already provides; remove them to silence.
+> - 1 x `CS0108` in `Application/Shared/Decorators/DecoratorApplicationExtensions.cs:178`
+>   — `DecoratorRegistration.Add(Type)` hides `List<Type>.Add(Type)`; add `new`
+>   or rename.
+>
+> None are blocking, but `TreatWarningsAsErrors` cannot be re-enabled until
+> they are cleared.
 
 ## Runtime status
 - Starts cleanly even when Redis is unavailable (lazy, `AbortOnConnectFail=false`).
@@ -44,10 +58,10 @@
 - Removed unused `using Yarp.ReverseProxy.Configuration;`, `using Microsoft.AspNetCore.OpenApi;`, etc.
 
 ## Known follow-ups (not blockers)
-- [ ] **Tests project** (`tests/FleetStream.UnitTests`, `tests/FleetStream.ApiTests`, `tests/FleetStream.InfrastructureTests`) - spec `09-testing.md` defines them but the directory is still empty. Add `xunit` + `NSubstitute` + `Testcontainers` to ship M1/M2.
-- [ ] **`POST /api/v1/auth/dev-token` with `subject: ""`** - currently returns 200 because the `[Required(AllowEmptyStrings = false)]` validation does not reject the default `"dev"` initialised value. Tighten with a custom IValidatableObject or by switching the DTO to a record with required init-only property.
-- [ ] **EF Core adapter** for `ITruckRepository` (M5 per `10-roadmap.md`) - the spec defers it.
-- [ ] **Kafka consumers** for `fleet.telemetry.processed` and `fleet.alerts` (M2) - infrastructure scaffolding (`KafkaOptions`) is in place; the `IHostedService` consumers are not yet implemented.
+- [x] **Tests projects** (`tests/FleetStream.UnitTests`, `tests/FleetStream.ApiTests`, `tests/FleetStream.InfrastructureTests`) - ~~"the directory is still empty"~~ **CORRECTED:** all three are populated. Measured on 2026-09-14 with `dotnet test BffApi/FleetStream.sln`: UnitTests **51/51 pass**, ApiTests **1/1 pass**, InfrastructureTests **1/1 fails locally** because `RedisTruckStateStoreTests` uses Testcontainers and no Docker daemon was available - an environment limitation, not a code defect. Re-verify in CI (which has Docker) before claiming full green.
+- [x] **Kafka consumers** for `fleet.telemetry.processed` and `fleet.alerts` (M2) - ~~the `IHostedService` consumers are not yet implemented~~ **CORRECTED:** `KafkaTelemetryConsumer` and `KafkaAlertConsumer` are implemented as `BackgroundService` types and registered in `Program.cs`. Outstanding work is runtime verification against a live broker, not implementation.
+- [ ] **Dev-token subject validation** - `POST /api/v1/auth/dev-token` still accepts an empty/whitespace `subject` and falls back to `dev`. Tighten with a custom `IValidatableObject` or a record with a required init-only property. Development-profile only, so not a production security hole, but it makes auth tests ambiguous.
+- [ ] **EF Core adapter** for `ITruckRepository` (M5 per `10-roadmap.md`) - the spec defers it; trucks are seeded in memory.
 
 ## How to run
 

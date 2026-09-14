@@ -4,6 +4,13 @@
 >
 > **Upstream dependency:** [BffApi](../BffApi/docs/README.md) (Phase 3) — REST + SignalR only.
 
+> **Note on status badges below:** they describe how complete each *specification
+> document* is, not the state of the code. Implementation ran ahead of the spec
+> suite: F0–F3 code exists in `src/` and its measured readiness (including which
+> planned items are still open) is tracked in
+> [docs/frontend/production-readiness-checklist.md](../../docs/frontend/production-readiness-checklist.md).
+> Do not read "TBD" here as "not built".
+
 ---
 
 ## Document index

@@ -1,0 +1,20 @@
+# Build artefacts and dependencies are installed/rebuilt inside the image.
+node_modules
+.next
+out
+build
+coverage
+
+# Local-only config; NEXT_PUBLIC_* arrive as build args.
+.env
+.env.*
+!.env.example
+
+# VCS / editor noise
+.git
+.gitignore
+*.tsbuildinfo
+next-env.d.ts
+Dockerfile
+.dockerignore
+npm-debug.log*

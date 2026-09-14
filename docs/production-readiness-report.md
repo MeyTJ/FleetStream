@@ -182,7 +182,7 @@ flowchart LR
 
 | Component | Status | Notes |
 |---|---|---|
-| Frontend / dashboard UI | ❌ | Referenced in [DEVELOPMENT_PHASES.md](../DEVELOPMENT_PHASES.md); no app in repo |
+| Frontend / dashboard UI | 🟡 | F0-F3 code exists in `frontend/` (Next.js dashboard, map, alerts, SignalR + REST, unit tests). F4-F5 hardening, E2E, Docker build verification and deployment sign-off remain - see [frontend checklist](frontend/production-readiness-checklist.md). |
 | Graph generator | 🔧 Dev tool | `tools/graph-generator` — architecture visualization, not production |
 
 ---
@@ -245,7 +245,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8082/api/v1/fleet/summar
 
 ### P2 — Maintainability and completeness
 
-8. **Frontend application** — not started; required for end-user fleet visualization per product vision.
+8. **Frontend application hardening (F4-F5)** — F0-F3 code is in `frontend/`; remaining work is E2E coverage, accessibility/Lighthouse gates, client error reporting, verified Docker image build, and deployed-environment sign-off.
 9. **Unified monorepo CI** — matrix build across all services on every PR.
 10. **Resolve BFF build warnings** — NU1510 package pruning, CS0108 hiding, xUnit1031 async pattern.
 

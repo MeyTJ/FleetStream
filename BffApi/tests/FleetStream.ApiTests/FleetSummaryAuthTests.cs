@@ -10,3 +10,4 @@ public sealed class ApiTestProjectSmokeTests
         typeof(Program).Assembly.GetName().Name.Should().Be("FleetStream.Presentation");
     }
 }
+

@@ -8,6 +8,7 @@ on:
       - "ingress-gateway/**"
       - "streaming-engine/**"
       - "BffApi/**"
+      - "frontend/**"
       - "docker-compose*.yml"
       - "scripts/verify-production-readiness.sh"
 

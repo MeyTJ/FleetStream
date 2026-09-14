@@ -2,8 +2,6 @@
 
 import { useState, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { SignalRProvider } from "@/lib/signalr-provider";
-import { useSignalREvents } from "@/lib/hooks/signalr-events";
 import { ReconnectBanner } from "@/components/reconnect-banner";
 import { TruckDetailPanel } from "@/components/truck-detail-panel";
 import { Skeleton } from "@/components/skeleton";
@@ -23,18 +21,9 @@ const FleetMap = dynamic(
 );
 
 export default function MapPage() {
-  return (
-    <SignalRProvider>
-      <MapPageInner />
-    </SignalRProvider>
-  );
-}
-
-function MapPageInner() {
+  // The hub connection and event subscriptions are owned by the dashboard
+  // layout (src/app/(dashboard)/layout.tsx) so they survive navigation.
   const [selectedTruckId, setSelectedTruckId] = useState<string | null>(null);
-
-  // Mount SignalR event handlers
-  useSignalREvents();
 
   const handleTruckClick = useCallback((truckId: string) => {
     setSelectedTruckId((prev) => (prev === truckId ? null : truckId));

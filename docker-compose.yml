@@ -82,6 +82,21 @@
       },
       "networks": ["fleetstream-net"]
     },
+    "frontend": {
+      "profiles": ["dev"],
+      "build": {
+        "context": "./frontend",
+        "dockerfile": "Dockerfile",
+        "args": {
+          "NEXT_PUBLIC_API_BASE_URL": "${FRONTEND_API_URL:-http://localhost:8082}",
+          "NEXT_PUBLIC_SIGNALR_HUB_URL": "${FRONTEND_API_URL:-http://localhost:8082}/hubs/v1/fleet"
+        }
+      },
+      "container_name": "fleetstream-frontend",
+      "depends_on": ["bff-api-dev"],
+      "ports": ["3000:3000"],
+      "networks": ["fleetstream-net"]
+    },
     "bff-api": {
       "profiles": ["production"],
       "build": {

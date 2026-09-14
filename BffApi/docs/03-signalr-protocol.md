@@ -83,6 +83,41 @@ All server-pushed methods are **strongly typed** via `IFleetHubClient` and `IAle
 - **Group:** all clients. Used for ops events (planned maintenance, rate-limit notices, etc.).
 - **Severity:** `info` | `warn` | `error`.
 
+### Implementation status of 3.3 (measured 2026-09-14)
+
+`IFleetHubClient` (`src/Presentation/Hubs/FleetHub.cs`) declares **four** methods:
+`OnTelemetrySample`, `OnTruckStateUpdate`, `OnAlert`, `OnFleetUpdate`.
+Three of the server-to-client methods specified above are **documented but not
+implemented anywhere on the server**, so no client can ever receive them:
+
+| Method | In `IFleetHubClient` | Sent by `SignalRNotificationService` | Client handler |
+| --- | --- | --- | --- |
+| `OnTelemetrySample` | yes | yes (`telemetry:full`) | yes - buffered, surfaced in the truck sparkline |
+| `OnTruckStateUpdate` | yes | yes | yes |
+| `OnAlert` | yes | yes | yes |
+| `OnFleetUpdate` | yes | yes | yes |
+| `OnAlertsPurged` | **no** | **no** | registered, but unreachable |
+| `OnPresenceChange` | **no** | **no** | not registered (nothing to receive) |
+| `OnSystemMessage` | **no** | **no** | not registered (nothing to receive) |
+
+Consequences to close before this document can be marked Final:
+
+- The frontend's `OnAlertsPurged` handler and `AlertsPurgeBanner` are dead code
+  until the server adds ring-buffer eviction and broadcasts the event (the
+  retention rule above). They are wired defensively and cost nothing, but no
+  purge banner will ever appear today.
+- Presence transitions have no push path. `truck-state-store.markTruckOffline()`
+  exists for exactly this payload but has no caller; staleness is currently only
+  observable via `OnTruckStateUpdate(isOnline: false)` or a REST refresh.
+- The backpressure row in 3.8 depends on `OnSystemMessage`, which does not
+  exist. Until it is implemented the client cannot distinguish "dropped due to
+  backpressure" from a silent gap, and only `RequestSnapshot()` recovery applies.
+
+Recommendation: either implement all three (they are small, and the 3.9
+acceptance criteria already assume them), or move them to a
+"not yet implemented" appendix so the contract stops implying support.
+
+
 ---
 
 ## 3.4 Client → Server methods

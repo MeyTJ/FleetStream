@@ -34,17 +34,16 @@ export function TruckDetailPanel({
   onClose,
 }: TruckDetailPanelProps) {
   const truck = useTruckStateMap(truckId);
-  const { connection } = useSignalR();
+  const { joinTruckGroup, leaveTruckGroup } = useSignalR();
 
-  // Join truck-specific group for granular updates
+  // Join truck-specific group for granular updates. Routed through the provider
+  // so the membership survives a reconnect (protocol §3.2).
   useEffect(() => {
-    if (!connection) return;
-    void connection.invoke("JoinTruckGroup", truckId);
-
+    joinTruckGroup(truckId);
     return () => {
-      void connection.invoke("LeaveTruckGroup", truckId);
+      leaveTruckGroup(truckId);
     };
-  }, [connection, truckId]);
+  }, [joinTruckGroup, leaveTruckGroup, truckId]);
 
   return (
     <div className="flex h-full flex-col border-l bg-white dark:bg-zinc-900">

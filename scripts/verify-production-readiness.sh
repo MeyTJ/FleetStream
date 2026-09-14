@@ -6,6 +6,7 @@ CI=false
 RUNTIME=false
 INGRESS_URL="${INGRESS_URL:-http://localhost:8080}"
 BFF_URL="${BFF_URL:-http://localhost:8082}"
+FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -42,6 +43,22 @@ pass "bff-api build"
 (cd "$ROOT/BffApi" && dotnet test FleetStream.sln -c Release --no-build -v q --nologo --filter "FullyQualifiedName!~Integration")
 pass "bff-api tests"
 
+echo "--- frontend ---"
+if command -v npm >/dev/null 2>&1; then
+  (cd "$ROOT/frontend" && npm ci --no-audit --no-fund)
+  pass "frontend npm ci"
+  (cd "$ROOT/frontend" && npm run lint)
+  pass "frontend lint"
+  (cd "$ROOT/frontend" && npm run typecheck)
+  pass "frontend typecheck"
+  (cd "$ROOT/frontend" && npm test)
+  pass "frontend unit tests"
+  (cd "$ROOT/frontend" && npm run build)
+  pass "frontend build"
+else
+  echo "SKIP: npm not on PATH - frontend checks skipped"
+fi
+
 if [[ "$RUNTIME" == true ]]; then
   echo "--- docker images ---"
   docker build -q -t fleetstream/ingress-gateway:verify "$ROOT/ingress-gateway"
@@ -50,6 +67,13 @@ if [[ "$RUNTIME" == true ]]; then
   pass "streaming-engine docker build"
   docker build -q -t fleetstream/bff-api:verify -f "$ROOT/BffApi/docker/Dockerfile" "$ROOT/BffApi"
   pass "bff-api docker build"
+  # Build with a non-local origin: this is what the CSP connect-src must reflect,
+  # otherwise the deployed dashboard cannot reach its own BFF.
+  docker build -q -t fleetstream/frontend:verify \
+    --build-arg NEXT_PUBLIC_API_BASE_URL="$BFF_URL" \
+    --build-arg NEXT_PUBLIC_SIGNALR_HUB_URL="$BFF_URL/hubs/v1/fleet" \
+    "$ROOT/frontend"
+  pass "frontend docker build"
 
   echo "--- stack runtime ---"
   cd "$ROOT"
@@ -57,7 +81,7 @@ if [[ "$RUNTIME" == true ]]; then
   export JWT_SIGNING_KEY="${JWT_SIGNING_KEY:-this-is-a-dev-signing-key-at-least-32-chars!!}"
 
   docker compose -f docker-compose.yml -f docker-compose.production.yml --profile dev up -d --build \
-    redis zookeeper kafka ingress-gateway streaming-engine bff-api-dev
+    redis zookeeper kafka ingress-gateway streaming-engine bff-api-dev frontend
 
   wait_for() {
     local url="$1" name="$2" max="${3:-60}"
@@ -77,6 +101,16 @@ if [[ "$RUNTIME" == true ]]; then
   wait_for "http://localhost:8081/health/ready" "streaming-engine readiness"
   wait_for "$BFF_URL/api/v1/health/live" "bff-api liveness"
   wait_for "$BFF_URL/api/v1/health/ready" "bff-api readiness"
+  wait_for "$FRONTEND_URL/login" "frontend serving login page"
+
+  # The browser reaches the BFF directly, so its CSP must allow the exact origin
+  # the image was built with. A localhost-only CSP here means an undeployable UI.
+  frontend_csp="$(curl -s -D - -o /dev/null "$FRONTEND_URL/login" \
+    | grep -i '^content-security-policy:' || true)"
+  [[ -n "$frontend_csp" ]] && pass "frontend returns a Content-Security-Policy header"
+  echo "$frontend_csp" | grep -qi 'localhost:8082' \
+    && pass "frontend CSP allows the dev BFF origin" \
+    || fail "frontend CSP does not allow the BFF origin: $frontend_csp"
 
   curl -sf "http://localhost:9090/metrics" | grep -q "fleetstream_ingress" && pass "ingress-gateway metrics"
   curl -sf "http://localhost:9091/metrics" | grep -q "fleetstream_streaming" && pass "streaming-engine metrics"

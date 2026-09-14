@@ -7,13 +7,17 @@
 
 import { useEffect, useRef } from "react";
 import { useSignalR } from "@/lib/signalr-provider";
-import type { TruckState, Alert } from "@/lib/types";
+import type { TruckState, Alert, TruckTelemetry } from "@/lib/types";
 import {
   applyTruckState,
   applyFleetUpdate,
   clearTruckStates,
 } from "@/lib/truck-state-store";
 import { pushAlert, clearAlerts, purgeAlerts } from "@/lib/alert-store";
+import {
+  applyTelemetrySample,
+  clearTelemetrySamples,
+} from "@/lib/telemetry-sample-store";
 import { useAuth } from "@/lib/auth-context";
 
 export function useSignalREvents() {
@@ -37,6 +41,14 @@ export function useSignalREvents() {
       pushAlert(alert);
     });
 
+    // SignalR protocol §3.3 — the high-rate admin telemetry stream. The server
+    // adds `fleet:admin` connections to `telemetry:full` in OnConnectedAsync,
+    // so non-admin sessions simply never receive this event and the buffers
+    // stay empty (consumers fall back to the 24 h REST history).
+    connection.on("OnTelemetrySample", (sample: TruckTelemetry) => {
+      applyTelemetrySample(sample);
+    });
+
     // SignalR protocol §3.3 — server-side ring-buffer eviction. Payload:
     // OnAlertsPurged(count: number, beforeTimestamp: string).
     // Trim entries older than the cutoff; the alert-store records a
@@ -55,6 +67,7 @@ export function useSignalREvents() {
         connection.off("OnTruckStateUpdate");
         connection.off("OnFleetUpdate");
         connection.off("OnAlert");
+        connection.off("OnTelemetrySample");
         connection.off("OnAlertsPurged");
         registeredRef.current = false;
       }
@@ -66,6 +79,7 @@ export function useSignalREvents() {
     if (!token) {
       clearTruckStates();
       clearAlerts();
+      clearTelemetrySamples();
     }
   }, [token]);
 

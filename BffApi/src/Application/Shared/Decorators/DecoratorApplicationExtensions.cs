@@ -33,6 +33,17 @@ public static class DecoratorApplicationExtensions
             // implement Handle, so they cannot be inner handlers.
             if (!HasHandleMethod(type)) continue;
 
+            // Skip open generic types. The decorators themselves implement
+            // ICommandHandler<TCommand, TResult>/IQueryHandler<TQuery, TResult>
+            // and expose a matching Handle method, so they pass the scan above.
+            // Wiring them would register an *open generic service type* (e.g.
+            // ICommandHandler`2[TCommand,TResult]) against an implementation that
+            // is not a matching open generic, which makes
+            // IServiceProviderFactory.BuildServiceProvider() throw
+            // ArgumentException at startup. Each decorator is closed per handler
+            // by MakeGenericType below, so it must never be scanned as a handler.
+            if (type.ContainsGenericParameters) continue;
+
             foreach (var iface in TypeCollect(type, commandIfaces))
                 Wire(services, iface, type, commandDecorators);
             foreach (var iface in TypeCollect(type, queryIfaces))
@@ -91,18 +102,18 @@ public static class DecoratorApplicationExtensions
         // interface (which is later bound to the outermost wrapper).
         s.TryAdd(new ServiceDescriptor(inner, inner, ServiceLifetime.Scoped));
 
-        // Build the chain from outside-in. Each decorator is registered as
-        // a closed generic, and the LAST `s.Add` for the service interface
-        // wins (the outermost decorator). Because the decorators take their
-        // inner as a `Func<>` factory, the DI graph contains no cycle.
-        for (var i = 0; i < closedDecorators.Length; i++)
+        // Register each closed decorator exactly once, via a factory that supplies
+        // its inner. The previous version also added a type->type self-mapping for
+        // every decorator so DI could "reach" it; that made the decorators
+        // constructible *by their own constructor*, whose first parameter is the
+        // Func<TInner> factory, which is never registered. In Development,
+        // ValidateOnBuild walks every descriptor and the host aborted with
+        // "Unable to resolve service for type 'System.Func`1[ICommandHandler`2...]'".
+        foreach (var t in closedDecorators)
         {
-            // Map each closed decorator type to itself so DI can resolve it
-            // when the next-decorator's `Func<>` ctor parameter is satisfied.
-            s.Add(new ServiceDescriptor(closedDecorators[i], closedDecorators[i], ServiceLifetime.Scoped));
+            s.RemoveAll(t);
         }
-        // Wire the chain: each decorator resolves its inner via a Func that
-        // asks the provider for the next-registered type.
+
         for (var i = 0; i < closedDecorators.Length - 1; i++)
         {
             var outerClosed = closedDecorators[i];
@@ -175,7 +186,12 @@ public static class DecoratorApplicationExtensions
 /// </summary>
 public sealed class DecoratorRegistration : List<Type>
 {
-    public DecoratorRegistration Add(Type openGenericDecorator)
+    /// <summary>
+    /// Fluent overload that returns <c>this</c> so registrations can be chained.
+    /// Intentionally hides <see cref="List{T}.Add"/> (which returns void); the
+    /// <c>new</c> modifier makes that hiding explicit and silences CS0108.
+    /// </summary>
+    public new DecoratorRegistration Add(Type openGenericDecorator)
     {
         base.Add(openGenericDecorator);
         return this;

@@ -4,6 +4,7 @@ using FleetStream.Application.Abstractions;
 using FleetStream.Core.Domain.Entities;
 using FleetStream.Infrastructure.Metrics;
 using FleetStream.Infrastructure.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -21,9 +22,7 @@ namespace FleetStream.Infrastructure.Messaging;
 public sealed class KafkaTelemetryConsumer : BackgroundService
 {
     private readonly KafkaOptions _opts;
-    private readonly ITruckStateStore _states;
-    private readonly ITelemetryHistoryStore _history;
-    private readonly INotificationService _notifier;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<KafkaTelemetryConsumer> _logger;
 
     // §3.3: OnTruckStateUpdate is capped at one broadcast per truck per 2 s
@@ -32,18 +31,20 @@ public sealed class KafkaTelemetryConsumer : BackgroundService
     private static readonly TimeSpan StateBroadcastMinInterval = TimeSpan.FromSeconds(2);
     private readonly Dictionary<string, DateTime> _lastStateBroadcastAt = new();
 
+    // ITruckStateStore / ITelemetryHistoryStore / INotificationService are all
+    // registered as *scoped* (they sit behind the Redis + SignalR adapters), while
+    // a BackgroundService is a singleton. Injecting them directly produced a
+    // captive dependency that ValidateOnBuild rejected at startup
+    // ("Cannot consume scoped service ... from singleton 'IHostedService'").
+    // A scope is created per message instead.
     public KafkaTelemetryConsumer(
         IOptions<KafkaOptions> opts,
-        ITruckStateStore states,
-        ITelemetryHistoryStore history,
-        INotificationService notifier,
+        IServiceScopeFactory scopeFactory,
         ILogger<KafkaTelemetryConsumer> logger)
     {
-        _opts     = opts.Value;
-        _states   = states;
-        _history  = history;
-        _notifier = notifier;
-        _logger   = logger;
+        _opts         = opts.Value;
+        _scopeFactory = scopeFactory;
+        _logger       = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -117,9 +118,15 @@ public sealed class KafkaTelemetryConsumer : BackgroundService
                     RiskScore               = telemetry.RiskScore,
                 };
 
-                await _states.SetStateAsync(state, stoppingToken);
-                await _history.AppendAsync(telemetry, stoppingToken);
-                await _notifier.BroadcastTelemetryUpdateAsync(telemetry, stoppingToken);
+                // Scoped services are resolved per message (see ctor comment).
+                using var scope = _scopeFactory.CreateScope();
+                var states   = scope.ServiceProvider.GetRequiredService<ITruckStateStore>();
+                var history  = scope.ServiceProvider.GetRequiredService<ITelemetryHistoryStore>();
+                var notifier = scope.ServiceProvider.GetRequiredService<INotificationService>();
+
+                await states.SetStateAsync(state, stoppingToken);
+                await history.AppendAsync(telemetry, stoppingToken);
+                await notifier.BroadcastTelemetryUpdateAsync(telemetry, stoppingToken);
 
                 // Throttle state broadcasts to one per truck per 2 s (§3.3).
                 var nowUtc = DateTime.UtcNow;
@@ -127,7 +134,7 @@ public sealed class KafkaTelemetryConsumer : BackgroundService
                     nowUtc - lastBroadcast >= StateBroadcastMinInterval)
                 {
                     _lastStateBroadcastAt[state.TruckId] = nowUtc;
-                    await _notifier.BroadcastTruckStateAsync(state, stoppingToken);
+                    await notifier.BroadcastTruckStateAsync(state, stoppingToken);
                 }
 
                 consumer.Commit(cr);

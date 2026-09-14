@@ -20,9 +20,12 @@
     <PackageReference Include="Confluent.Kafka" Version="2.6.0" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.11" />
+    <!--
+      Microsoft.Extensions.Diagnostics.HealthChecks, .Hosting.Abstractions and
+      .Options are intentionally NOT referenced: the Microsoft.AspNetCore.App
+      framework reference above already provides them, and listing them triggers
+      NU1510 ("will not be pruned ... likely unnecessary").
+    -->
     <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
   </ItemGroup>
 

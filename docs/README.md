@@ -14,11 +14,11 @@ Cross-cutting and application-specific production readiness documentation derive
 | [BFF API checklist](bff-api/production-readiness-checklist.md) | Per-app P0/P1/P2 + verification |
 | [Ingress Gateway checklist](ingress-gateway/production-readiness-checklist.md) | Per-app P0/P1/P2 + verification |
 | [Streaming Engine checklist](streaming-engine/production-readiness-checklist.md) | Per-app P0/P1/P2 + verification |
-| [Frontend checklist](frontend/production-readiness-checklist.md) | Phase 4 dashboard — not started |
+| [Frontend checklist](frontend/production-readiness-checklist.md) | Phase 4 dashboard — partially implemented: F0-F3 code exists, F4-F5 open |
 
-### Current status (2026-08-31)
+### Current status (2026-09-14)
 
-All three backend applications — **Ingress Gateway**, **Streaming Engine**, and **BFF API** — have P0/P1/P2 remediation complete. **Frontend (Phase 4)** is planned; see [frontend/docs/01-implementation-phases.md](../frontend/docs/01-implementation-phases.md). **P0 and P1 platform gaps (CI, secrets, E2E, K8s, observability, TLS) are resolved.** Per-app runtime verification sign-off remains before production cutover. See the [consolidated report](production-readiness-report.md) for details.
+All three backend applications — **Ingress Gateway**, **Streaming Engine**, and **BFF API** — have P0/P1/P2 remediation complete. **Frontend (Phase 4)** has F0-F3 feature code in the repo (dashboard, map, alerts, telemetry, SignalR + REST integration, unit tests) - see [docs/frontend/production-readiness-checklist.md](frontend/production-readiness-checklist.md) for the measured gaps. See [frontend/docs/01-implementation-phases.md](../frontend/docs/01-implementation-phases.md). **P0 and P1 platform gaps (CI, secrets, E2E, K8s, observability, TLS) are resolved.** Per-app runtime verification sign-off remains before production cutover. See the [consolidated report](production-readiness-report.md) for details.
 
 ## Related documentation
 

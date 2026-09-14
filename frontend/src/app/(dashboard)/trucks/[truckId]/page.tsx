@@ -2,8 +2,11 @@
 
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { useEffect } from "react";
 import { ArrowLeft, Truck, Gauge, Thermometer, Fuel, AlertTriangle, MapPin } from "lucide-react";
 import { useTruck, useTruckState } from "@/lib/hooks/fleet";
+import { useSignalR } from "@/lib/signalr-provider";
+import { useTruckStateMap } from "@/lib/truck-state-store";
 import { StatusBadge } from "@/components/truck-table";
 import { Skeleton } from "@/components/skeleton";
 import { ErrorState } from "@/components/error-state";
@@ -39,7 +42,20 @@ export default function TruckDetailPage() {
   const params = useParams<{ truckId: string }>();
   const truckId = params.truckId;
   const { data: truck, isLoading, error, refetch } = useTruck(truckId);
-  const { data: liveState } = useTruckState(truckId);
+  const { data: restState } = useTruckState(truckId);
+  const { joinTruckGroup, leaveTruckGroup } = useSignalR();
+
+  // Subscribe to `truck:{id}` (§3.4) so OnTruckStateUpdate for this truck is
+  // pushed to the connection, and read it from the live store. Without the
+  // join, the deep link only ever showed the REST snapshot from mount time.
+  useEffect(() => {
+    joinTruckGroup(truckId);
+    return () => {
+      leaveTruckGroup(truckId);
+    };
+  }, [joinTruckGroup, leaveTruckGroup, truckId]);
+
+  const liveState = useTruckStateMap(truckId) ?? restState;
 
   if (isLoading) return <DetailSkeleton />;
 

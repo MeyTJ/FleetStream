@@ -7,6 +7,7 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -274,18 +275,82 @@ export function AlertFeed() {
       {filtered.length === 0 ? (
         <EmptyState hasFilters={activeSeverities.size > 0} />
       ) : (
-        <div className="space-y-2">
-          {filtered.map((alert) => (
-            <AlertRow
-              key={alert.id}
-              alert={alert}
-              canAck={canAck}
-              isAcking={acknowledging.has(alert.id)}
-              onAck={handleAck}
-            />
-          ))}
-        </div>
+        <VirtualizedAlertList
+          alerts={filtered}
+          canAck={canAck}
+          acknowledging={acknowledging}
+          onAck={handleAck}
+        />
       )}
+    </div>
+  );
+}
+
+// ─── Virtualized list ───────────────────────────────────────
+//
+// The alert ring buffer holds up to 500 entries (protocol §3.3). Rendering all
+// of them as live React rows is what actually stalls the feed at fleet scale —
+// every incoming OnAlert would reconcile hundreds of offscreen DOM nodes.
+// Rows are windowed to the scroll viewport instead; heights are measured per
+// row because the message text wraps.
+
+function VirtualizedAlertList({
+  alerts,
+  canAck,
+  acknowledging,
+  onAck,
+}: {
+  alerts: Alert[];
+  canAck: boolean;
+  acknowledging: Set<string>;
+  onAck: (alert: Alert) => void;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: alerts.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 112,
+    overscan: 6,
+    // Keep newest rows (index 0) stable as alerts are prepended.
+    getItemKey: (index) => alerts[index]?.id ?? index,
+  });
+
+  const items = virtualizer.getVirtualItems();
+
+  return (
+    <div
+      ref={parentRef}
+      className="max-h-[70vh] overflow-y-auto"
+      role="feed"
+      aria-busy={false}
+      aria-label="Alert feed"
+    >
+      <div
+        className="relative w-full"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
+        {items.map((vi) => {
+          const alert = alerts[vi.index];
+          if (!alert) return null;
+          return (
+            <div
+              key={vi.key}
+              data-index={vi.index}
+              ref={virtualizer.measureElement}
+              className="absolute left-0 top-0 w-full pb-2"
+              style={{ transform: `translateY(${vi.start}px)` }}
+            >
+              <AlertRow
+                alert={alert}
+                canAck={canAck}
+                isAcking={acknowledging.has(alert.id)}
+                onAck={onAck}
+              />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

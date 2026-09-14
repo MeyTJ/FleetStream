@@ -86,6 +86,12 @@ services.ConfigureHttpJsonOptions(o =>
 services.AddSingleton<IConnectionMultiplexer>(sp =>
 {
     var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RedisOptions>>().Value;
+    // RedisOptions.Endpoints is initialised with a default localhost:6379 entry and
+    // the configuration binder *appends* list items rather than replacing them. Any
+    // appsettings that also declares an endpoint therefore yields duplicates, and
+    // StackExchange.Redis throws ArgumentException("EndPoints must be unique") when
+    // the same host:port is added twice — which surfaced as a 500 on every
+    // Redis-backed endpoint. Deduplicate while preserving order.
     var configuration = new ConfigurationOptions
     {
         AbortOnConnectFail = false,                // critical for lazy start
@@ -93,8 +99,10 @@ services.AddSingleton<IConnectionMultiplexer>(sp =>
         SyncTimeout        = opts.SyncTimeoutMs,
         ClientName         = "fleetstream-bff",
     };
-    foreach (var ep in opts.Endpoints)
-        configuration.EndPoints.Add(ep.Host, ep.Port);
+    foreach (var ep in opts.DistinctEndpoints())
+    {
+        configuration.EndPoints.Add(ep.Host.Trim(), ep.Port);
+    }
     return ConnectionMultiplexer.Connect(configuration);
 });
 

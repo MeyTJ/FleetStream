@@ -12,10 +12,21 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
+        - fleetstream.example.com
         - api.fleetstream.example.com
         - ingest.fleetstream.example.com
       secretName: fleetstream-tls
   rules:
+    - host: fleetstream.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
     - host: api.fleetstream.example.com
       http:
         paths:

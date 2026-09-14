@@ -1,37 +1,17 @@
 import type { NextConfig } from "next";
+import { buildSecurityHeaders } from "./src/lib/csp";
 
-const securityHeaders = [
-  {
-    key: "X-Frame-Options",
-    value: "DENY",
-  },
-  {
-    key: "X-Content-Type-Options",
-    value: "nosniff",
-  },
-  {
-    key: "Referrer-Policy",
-    value: "strict-origin-when-cross-origin",
-  },
-  {
-    key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=()",
-  },
-  {
-    key: "Content-Security-Policy",
-    value: [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https://demotiles.maplibre.org",
-      "font-src 'self' https://fonts.gstatic.com",
-      "connect-src 'self' http://localhost:8080 ws://localhost:8080 https://*.maplibre.org",
-      "frame-ancestors 'none'",
-    ].join("; "),
-  },
-];
+/**
+ * Security response headers, built from environment configuration by
+ * `src/lib/csp.ts` (see that module for the `connect-src` rationale and
+ * `src/lib/csp.test.ts` for the assertions).
+ */
+const securityHeaders = buildSecurityHeaders(process.env);
 
 const nextConfig: NextConfig = {
+  // Emit a self-contained server bundle so the Docker image can ship just
+  // .next/standalone + static/public instead of node_modules (see Dockerfile).
+  output: "standalone",
   async headers() {
     return [
       {

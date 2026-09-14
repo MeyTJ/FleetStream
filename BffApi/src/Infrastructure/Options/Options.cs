@@ -20,6 +20,33 @@ public sealed class RedisOptions
 
     [Required]
     public string KeyPrefix { get; set; } = "fleetstream";
+
+    /// <summary>
+    /// The configured endpoints, normalised and de-duplicated while preserving order.
+    /// <para>
+    /// <see cref="Endpoints"/> is seeded with a default <c>localhost:6379</c> entry and
+    /// the .NET configuration binder <em>appends</em> to a list rather than replacing it.
+    /// Any appsettings file that also declares an endpoint therefore produces duplicates.
+    /// <c>StackExchange.Redis</c> rejects the same host:port twice with
+    /// <see cref="ArgumentException"/>("EndPoints must be unique"), which manifested as a
+    /// 500 on every Redis-backed endpoint while the host still reported healthy.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<RedisEndpoint> DistinctEndpoints()
+    {
+        var seen = new HashSet<(string Host, int Port)>();
+        var result = new List<RedisEndpoint>(Endpoints.Count);
+
+        foreach (var ep in Endpoints)
+        {
+            if (ep is null) continue;
+            var key = (ep.Host.Trim().ToLowerInvariant(), ep.Port);
+            if (seen.Add(key))
+                result.Add(ep);
+        }
+
+        return result;
+    }
 }
 
 public sealed class RedisEndpoint

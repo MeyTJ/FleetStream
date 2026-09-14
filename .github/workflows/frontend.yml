@@ -22,4 +22,51 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm test
       - run: npm run build
+
+  # Guards the deployment-blocking invariant: a production image built with a
+  # real API origin must not leave localhost in the CSP connect-src.
+  csp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Build image for a non-local origin
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.fleetstream.example.com \
+            --build-arg NEXT_PUBLIC_SIGNALR_HUB_URL=https://api.fleetstream.example.com/hubs/v1/fleet \
+            -t fleetstream/frontend:csp-check .
+      - name: Assert the served CSP names the deployed origin
+        run: |
+          docker run -d --rm --name csp-check -p 3000:3000 fleetstream/frontend:csp-check
+          trap 'docker stop csp-check' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:3000/login; then break; fi
+            sleep 2
+          done
+          csp="$(curl -fsS -o /dev/null -D - http://127.0.0.1:3000/login \
+            | grep -i '^content-security-policy:' || true)"
+          echo "$csp"
+          if [ -z "$csp" ]; then
+            echo "::error::No Content-Security-Policy header returned"
+            exit 1
+          fi
+          if ! echo "$csp" | grep -q 'https://api\.fleetstream\.example\.com'; then
+            echo "::error::CSP does not allow the deployed API origin"
+            exit 1
+          fi
+          if echo "$csp" | grep -q 'localhost'; then
+            echo "::error::CSP still allows localhost; the image is not deployable"
+            exit 1
+          fi
+

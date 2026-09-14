@@ -17,6 +17,10 @@
 import { useMemo, useState } from "react";
 import { Activity } from "lucide-react";
 import { useTruckTelemetry } from "@/lib/hooks/fleet";
+import {
+  useTelemetrySamples,
+  useHasLiveTelemetry,
+} from "@/lib/telemetry-sample-store";
 import type { TruckTelemetry } from "@/lib/types";
 import { Skeleton } from "@/components/skeleton";
 import { ErrorState } from "@/components/error-state";
@@ -310,13 +314,24 @@ export function TelemetrySparkline({
 }) {
   const def = METRICS[metric];
   const { data, isLoading } = useTruckTelemetry(truckId, { hours, limit });
+  const liveSamples = useTelemetrySamples(truckId);
+  const isAdminStream = useHasLiveTelemetry();
 
-  const values = useMemo(
-    () => (data ? toSeries(data).map((s) => s[metric]) : []),
-    [data, metric],
-  );
+  // Admin sessions receive OnTelemetrySample pushes (§3.3 — `telemetry:full` is
+  // admin-only), so merge that live tail on top of the REST history to keep the
+  // newest reading visible without a refetch. Non-admin sessions only ever see
+  // the REST window, which is the spec'd behaviour.
+  const values = useMemo(() => {
+    const rest = data ? toSeries(data) : [];
+    if (liveSamples.length === 0) return rest.map((s) => s[metric]);
+    const seen = new Set(rest.map((s) => s.eventTimestamp));
+    const fresh = toSeries(
+      liveSamples.filter((s) => !seen.has(s.eventTimestamp)),
+    );
+    return [...rest, ...fresh].map((s) => s[metric]);
+  }, [data, liveSamples, metric]);
 
-  if (isLoading) return <Skeleton className="h-20 w-full" />;
+  if (isLoading && !isAdminStream) return <Skeleton className="h-20 w-full" />;
 
   return (
     <div className="rounded-lg border bg-zinc-50 p-3 dark:bg-zinc-800">
@@ -324,6 +339,11 @@ export function TelemetrySparkline({
         <span className="text-xs font-medium text-muted-foreground">
           {def.label} — last {hours} h
         </span>
+        {isAdminStream && (
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+            live
+          </span>
+        )}
         {values.length > 0 && (
           <span
             className="text-sm font-semibold tabular-nums"
